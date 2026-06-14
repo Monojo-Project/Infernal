@@ -1,4 +1,4 @@
-#!/home/usuario/lua
+#!/bin/lua
 
 -------- Configuración de la carpeta raíz de Infernal --------
 local infernalRoot = os.getenv("HOME") .. "/infernal"
