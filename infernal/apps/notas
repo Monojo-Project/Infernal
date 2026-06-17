@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Ruta del archivo de notas
+ARCHIVO="$HOME/.infernal/notas"
+DIRECTORIO="$HOME/.infernal"
+
+# Nos aseguramos de que el directorio y el archivo existan
+mkdir -p "$DIRECTORIO"
+touch "$ARCHIVO"
+
+# Comprobamos los argumentos pasados al script
+if [[ "$1" == "--editar" || "$1" == "--add" || "$1" == "-e" ]]; then
+    nano "$ARCHIVO"
+elif [ -z "$1" ]; then
+    cat "$ARCHIVO"
+else
+    echo "Argumento no válido."
+    echo "Uso para leer:   $0"
+    echo "Uso para editar: $0 --editar"
+fi
