@@ -1,8 +1,10 @@
 /*
- * infernal.c
+ * infernal.c: el código fuente de Infernal
+ * Infernal 0.2 Aplha
  * Infernal es un lenguaje de programación inspirado en Bash + Lua
  * GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
  */
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +26,8 @@ typedef enum {
     TOK_EEQ, TOK_NEQ, TOK_LT, TOK_GT, TOK_LE, TOK_GE,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMI, TOK_COMMA, TOK_PIPE, TOK_GT_OP, TOK_LT_OP, TOK_GGT,
-    TOK_IF, TOK_THEN, TOK_FI, TOK_ELSE, TOK_WHILE, TOK_FOR,
+    TOK_IF, TOK_THEN, TOK_FI, TOK_ELSE, TOK_ELIF,
+    TOK_WHILE, TOK_FOR,
     TOK_FUNCTION, TOK_RETURN, TOK_BREAK, TOK_REPEAT,
     TOK_IMPORT, TOK_TRY, TOK_CATCH,
     TOK_INT, TOK_FLOAT, TOK_BOOL, TOK_STRING, TOK_LIST,
@@ -63,7 +66,7 @@ struct ASTNode {
         struct { char *var; int vtype; ASTNode *init, *cond, *incr; NodeList body; } for_stmt;
         struct { char *name; char **params; int *ptypes; int param_count; NodeList body; } func;
         struct { ASTNode *expr; } ret;
-        struct { char *path; NodeList module_block; } import;  // <-- ahora incluye el bloque del módulo
+        struct { char *path; NodeList module_block; } import;
         struct { NodeList try_block, catch_block; } try_stmt;
         struct { char *name; } var;
         struct { int type; int ival; double fval; int bval; char *sval; } lit;
@@ -285,7 +288,8 @@ typedef struct {
 } Keyword;
 
 Keyword keywords[] = {
-    {"if", TOK_IF}, {"then", TOK_THEN}, {"fi", TOK_FI}, {"else", TOK_ELSE},
+    {"if", TOK_IF}, {"then", TOK_THEN}, {"fi", TOK_FI},
+    {"else", TOK_ELSE}, {"elif", TOK_ELIF}, {"elseif", TOK_ELIF},
     {"while", TOK_WHILE}, {"for", TOK_FOR},
     {"function", TOK_FUNCTION}, {"return", TOK_RETURN},
     {"break", TOK_BREAK}, {"repeat", TOK_REPEAT},
@@ -341,6 +345,7 @@ void tokenize_file(FILE *fp) {
             if (*p == '=' && *(p+1) == '=') { ts_add((Token){TOK_EEQ, "==", lineno}); p+=2; continue; }
             if (*p == '!' && *(p+1) == '=') { ts_add((Token){TOK_NEQ, "!=", lineno}); p+=2; continue; }
             if (*p == '<' && *(p+1) == '=') { ts_add((Token){TOK_LE, "<=", lineno}); p+=2; continue; }
+            if (*p == '=' && *(p+1) == '<') { ts_add((Token){TOK_LE, "=<", lineno}); p+=2; continue; }
             if (*p == '>' && *(p+1) == '=') { ts_add((Token){TOK_GE, ">=", lineno}); p+=2; continue; }
             if (*p == '>' && *(p+1) == '>') { ts_add((Token){TOK_GGT, ">>", lineno}); p+=2; continue; }
             if (*p == '|') { ts_add((Token){TOK_PIPE, "|", lineno}); p++; continue; }
@@ -582,21 +587,65 @@ NodeList parse_block(const char *terminator) {
         Token t = ts_peek();
         if (t.type == TOK_EOF) break;
         if (terminator && lookup_keyword(terminator) == t.type) break;
+        // Para bloques terminados con "fi", también salir con else/elif
+        if (terminator && strcmp(terminator, "fi") == 0) {
+            if (t.type == TOK_ELSE || t.type == TOK_ELIF) break;
+            if (t.type == TOK_IDENT && (strcmp(t.lexeme, "elif") == 0 || strcmp(t.lexeme, "elseif") == 0)) break;
+        }
 
         ASTNode *stmt = NULL;
 
         if (t.type == TOK_IF) {
-            ts_advance();
+            ts_advance(); // consume 'if'
             ASTNode *cond = parse_expression(0);
             if (!ts_match(TOK_THEN)) error(t.line, "Se esperaba 'then'");
-            NodeList then_block = parse_block("fi");
-            NodeList else_block = {NULL,0,0};
-            if (ts_match(TOK_ELSE)) else_block = parse_block("fi");
+            NodeList then_block = parse_block("fi"); // se detiene en else/elif/fi
+
+            // Nodo principal del if
+            ASTNode *if_node = node_create(NODE_IF, t.line);
+            if_node->data.if_stmt.cond = cond;
+            if_node->data.if_stmt.then_block = then_block;
+            if_node->data.if_stmt.else_block = (NodeList){NULL,0,0};
+
+            ASTNode *current_if = if_node;
+
+            // Procesar cadena de else / else if / elif
+            while (1) {
+                if (ts_match(TOK_ELIF)) {                     // 'elif' o 'elseif'
+                    ASTNode *elif_cond = parse_expression(0);
+                    if (!ts_match(TOK_THEN)) error(t.line, "Se esperaba 'then'");
+                    NodeList elif_then = parse_block("fi");
+                    ASTNode *elif_node = node_create(NODE_IF, t.line);
+                    elif_node->data.if_stmt.cond = elif_cond;
+                    elif_node->data.if_stmt.then_block = elif_then;
+                    elif_node->data.if_stmt.else_block = (NodeList){NULL,0,0};
+                    nodelist_add(&current_if->data.if_stmt.else_block, elif_node);
+                    current_if = elif_node;
+                } else if (ts_match(TOK_ELSE)) {
+                    if (ts_peek().type == TOK_IF) {           // 'else if'
+                        ts_advance();
+                        ASTNode *elseif_cond = parse_expression(0);
+                        if (!ts_match(TOK_THEN)) error(t.line, "Se esperaba 'then'");
+                        NodeList elseif_then = parse_block("fi");
+                        ASTNode *elseif_node = node_create(NODE_IF, t.line);
+                        elseif_node->data.if_stmt.cond = elseif_cond;
+                        elseif_node->data.if_stmt.then_block = elseif_then;
+                        elseif_node->data.if_stmt.else_block = (NodeList){NULL,0,0};
+                        nodelist_add(&current_if->data.if_stmt.else_block, elseif_node);
+                        current_if = elseif_node;
+                    } else {                                   // 'else' simple
+                        NodeList plain_else = parse_block("fi");
+                        current_if->data.if_stmt.else_block = plain_else;
+                        break; // después de else simple no puede haber más
+                    }
+                } else {
+                    break;
+                }
+            }
+
             if (!ts_match(TOK_FI)) error(t.line, "Se esperaba 'fi'");
-            stmt = node_create(NODE_IF, t.line);
-            stmt->data.if_stmt.cond = cond;
-            stmt->data.if_stmt.then_block = then_block;
-            stmt->data.if_stmt.else_block = else_block;
+            stmt = if_node;
+
         } else if (t.type == TOK_WHILE) {
             ts_advance();
             ASTNode *cond = parse_expression(0);
@@ -689,7 +738,6 @@ NodeList parse_block(const char *terminator) {
                 path = strdup(buf);
             } else error(t.line, "Se esperaba nombre o ruta en import");
 
-            // Procesar el módulo ahora mismo para registrar funciones
             FILE *fp = fopen(path, "r");
             if (!fp) error(t.line, "No se pudo abrir módulo: %s", path);
             TokenStream old_ts = ts; ts_init(); tokenize_file(fp); fclose(fp);
@@ -862,6 +910,12 @@ NodeList parse_block(const char *terminator) {
         if (stmt) nodelist_add(&block, stmt);
         ts_skip_newlines();
         if (terminator && ts_peek().type == lookup_keyword(terminator)) break;
+        // Para bloques "fi", también salir si encontramos else/elif (por si no se consumió antes)
+        if (terminator && strcmp(terminator, "fi") == 0) {
+            TokenType nt = ts_peek().type;
+            if (nt == TOK_ELSE || nt == TOK_ELIF) break;
+            if (nt == TOK_IDENT && (strcmp(ts_peek().lexeme, "elif") == 0 || strcmp(ts_peek().lexeme, "elseif") == 0)) break;
+        }
     }
     return block;
 }
