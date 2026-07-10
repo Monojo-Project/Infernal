@@ -1,17 +1,12 @@
 /*
  * infernal.c
- * Infernal: lenguaje de programación inspirado en Bash + Lua + Python
- * Copyright (C) 2026, GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
+ * Infernal: lenguaje de programación inspirado en Bash + Lua
+ * GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
  *
- * Características:
- *   - Listas, inserción y eliminación.
- *   - Acceso por índice (1‑based) con `lista[índice]`.
- *   - Bucle for‑in sobre listas: `for variable in lista then ... fi`.
- *   - Variables locales (local) y globales (global).
- *   - Flags para CLI.
- *   - Ejecución de comandos en asignaciones.
- *   - printAllVars() con ámbito y tipo.
- *   - Operadores lógicos &&, ||, and, or.
+ * Correcciones:
+ *   - "flags" y "flag" son palabras reservadas (TOK_FLAG).
+ *   - Los nombres de flags se guardan completos (--name, -n, etc.).
+ *   - El catch-all '*' funciona.
  */
 
 #include <stdio.h>
@@ -43,7 +38,8 @@ typedef enum {
     TOK_TRUE, TOK_FALSE,
     TOK_LOCAL, TOK_GLOBAL,
     TOK_AND, TOK_OR,
-    TOK_IN
+    TOK_IN,
+    TOK_FLAG               /* "flags" o "flag" */
 } TokenType;
 
 typedef struct {
@@ -61,11 +57,13 @@ typedef struct {
 } NodeList;
 
 typedef struct FlagSpec {
-    char **names;
+    char **names;          /* nombres completos: --name, -n, etc. */
     int name_count;
-    int vtype;
-    char *var_name;
-    NodeList block;
+    int vtype;             /* TOK_INT, TOK_FLOAT, ... */
+    char *var_name;        /* nombre de la variable que recibe el valor */
+    Token *body_tokens;
+    int body_count;
+    bool catch_all;        /* flag '*' atrapa el resto */
 } FlagSpec;
 
 struct ASTNode {
@@ -274,6 +272,9 @@ jmp_buf exception_env;
 int exception_raised = 0;
 char exception_msg[256];
 
+char **source_lines = NULL;
+int source_line_count = 0;
+
 void error(int line, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -281,6 +282,9 @@ void error(int line, const char *fmt, ...) {
     va_end(ap);
     if (line > 0) {
         snprintf(exception_msg + len, sizeof(exception_msg) - len, " (línea %d)", line);
+    }
+    if (line > 0 && line <= source_line_count) {
+        fprintf(stderr, "Línea: %s\n", source_lines[line-1]);
     }
     exception_raised = 1;
     longjmp(exception_env, 1);
@@ -299,9 +303,6 @@ typedef struct {
 } TokenStream;
 
 TokenStream ts;
-
-char **source_lines = NULL;
-int source_line_count = 0;
 
 void ts_init() { ts.tokens = NULL; ts.count = ts.cap = 0; ts.pos = 0; }
 void ts_add(Token t) {
@@ -346,6 +347,7 @@ Keyword keywords[] = {
     {"local", TOK_LOCAL}, {"global", TOK_GLOBAL},
     {"and", TOK_AND}, {"or", TOK_OR},
     {"in", TOK_IN},
+    {"flag", TOK_FLAG}, {"flags", TOK_FLAG},   /* ambas formas */
     {NULL, TOK_EOF}
 };
 
@@ -375,7 +377,6 @@ void tokenize_file(FILE *fp) {
     size_t len = 0;
     int lineno = 0;
     bool in_block_comment = false;
-    int block_comment_start_line = 0;
 
     if (source_lines) {
         for (int i = 0; i < source_line_count; i++) free(source_lines[i]);
@@ -404,14 +405,23 @@ void tokenize_file(FILE *fp) {
 
         while (*p) {
             if (*p == '#' && *(p+1) == '#' && *(p+2) == '#') {
-                block_comment_start_line = lineno;
-                char *close = strstr(p + 3, "###");
-                if (close) {
-                    p = close + 3;
-                    continue;
+                if (!in_block_comment) {
+                    char *close = strstr(p + 3, "###");
+                    if (close) {
+                        p = close + 3;
+                        continue;
+                    } else {
+                        break;  // comentario de línea
+                    }
                 } else {
-                    in_block_comment = true;
-                    break;
+                    char *close = strstr(p, "###");
+                    if (close) {
+                        in_block_comment = false;
+                        p = close + 3;
+                        continue;
+                    } else {
+                        break;
+                    }
                 }
             }
             if (*p == '#') break;
@@ -497,10 +507,6 @@ void tokenize_file(FILE *fp) {
         ts_add((Token){TOK_NEWLINE, "\n", lineno});
     }
     free(line);
-
-    if (in_block_comment) {
-        error(block_comment_start_line, "Comentario de bloque sin cerrar");
-    }
 }
 
 /* ========================================================================== */
@@ -593,7 +599,6 @@ ASTNode *parse_primary() {
         return n;
     }
     if (t.type == TOK_LBRACKET) {
-        // List literal
         ts_advance();
         ASTNode *n = node_create(NODE_LIST, t.line);
         n->data.list_lit.items = NULL;
@@ -707,7 +712,30 @@ ASTNode *parse_expression(int _) {
     return parse_logic_or();
 }
 
-/* Parser de flags */
+void parse_flag_body_tokens(Token **body_tokens, int *body_count) {
+    int depth = 1;
+    *body_tokens = NULL;
+    *body_count = 0;
+    int cap = 0;
+
+    while (depth > 0 && ts.pos < ts.count) {
+        Token t = ts_advance();
+        if (t.type == TOK_LBRACE) depth++;
+        else if (t.type == TOK_RBRACE) {
+            depth--;
+            if (depth == 0) break;
+        }
+        if (*body_count >= cap) {
+            cap = cap == 0 ? 64 : cap * 2;
+            *body_tokens = realloc(*body_tokens, cap * sizeof(Token));
+        }
+        (*body_tokens)[(*body_count)++] = t;
+    }
+    if (depth != 0) {
+        error(ts.tokens[ts.pos-1].line, "No se encontró '}' que cierra el bloque del flag");
+    }
+}
+
 ASTNode *parse_flags() {
     int line = ts_peek().line;
     if (!ts_match(TOK_LPAREN)) error(line, "Se esperaba '(' después de 'flags'");
@@ -725,47 +753,76 @@ ASTNode *parse_flags() {
     node->data.flags.spec_count = 0;
     
     while (!ts_match(TOK_RPAREN)) {
+        ts_skip_newlines();
+        
         FlagSpec spec;
         spec.names = NULL;
         spec.name_count = 0;
         spec.vtype = 0;
         spec.var_name = NULL;
-        spec.block = (NodeList){NULL,0,0};
-        
-        if (ts_peek().type == TOK_MINUS && ts.pos+1 < ts.count && ts.tokens[ts.pos+1].type == TOK_MINUS) {
-            ts_advance(); ts_advance();
-            if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de flag después de '--'");
-            char *name = strdup(ts_advance().lexeme);
-            spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
-            spec.names[spec.name_count-1] = name;
-        } else {
-            error(line, "Se esperaba '--' para comenzar un flag");
-        }
-        while (ts_peek().type == TOK_PIPE) {
+        spec.body_tokens = NULL;
+        spec.body_count = 0;
+        spec.catch_all = false;
+
+        if (ts_peek().type == TOK_STAR) {
             ts_advance();
-            if (ts_peek().type == TOK_MINUS && ts.pos+1 < ts.count && ts.tokens[ts.pos+1].type == TOK_MINUS) {
-                ts_advance(); ts_advance();
-                if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de alias");
-                char *alias = strdup(ts_advance().lexeme);
+            spec.catch_all = true;
+            if (!ts_match(TOK_LBRACE)) error(line, "Se esperaba '{' después de '*'");
+            parse_flag_body_tokens(&spec.body_tokens, &spec.body_count);
+        } else {
+            /* leer nombre completo con guiones */
+            char full_name[128] = "";
+            if (ts_peek().type == TOK_MINUS) {
+                ts_advance();                    /* consume primer '-' */
+                strcat(full_name, "-");
+                if (ts_peek().type == TOK_MINUS) {
+                    ts_advance();                /* consume segundo '-' */
+                    strcat(full_name, "-");
+                }
+                if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de flag después de '-' o '--'");
+                strcat(full_name, ts_advance().lexeme);
+                
                 spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
-                spec.names[spec.name_count-1] = alias;
+                spec.names[spec.name_count-1] = strdup(full_name);
             } else {
-                error(line, "Alias debe comenzar con '--'");
+                error(line, "Se esperaba '--' o '-' para comenzar un flag");
             }
-        }
-        if (ts_match(TOK_EQ)) {
-            TokenType t = ts_peek().type;
-            if (t == TOK_INT || t == TOK_FLOAT || t == TOK_BOOL || t == TOK_STRING || t == TOK_LIST) {
-                spec.vtype = ts_advance().type;
-                if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de variable para el flag");
-                spec.var_name = strdup(ts_advance().lexeme);
-            } else {
-                error(line, "Se esperaba tipo después de '=' en flag (int, float, bool, string, list)");
+
+            /* alias con | */
+            while (ts_peek().type == TOK_PIPE) {
+                ts_advance();
+                char alias_name[128] = "";
+                if (ts_peek().type == TOK_MINUS) {
+                    ts_advance();
+                    strcat(alias_name, "-");
+                    if (ts_peek().type == TOK_MINUS) {
+                        ts_advance();
+                        strcat(alias_name, "-");
+                    }
+                    if (ts_peek().type != TOK_IDENT) error(line, "Alias debe tener un identificador después de los guiones");
+                    strcat(alias_name, ts_advance().lexeme);
+                    spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
+                    spec.names[spec.name_count-1] = strdup(alias_name);
+                } else {
+                    error(line, "Alias debe comenzar con '-' o '--'");
+                }
             }
+
+            /* valor con tipo */
+            if (ts_match(TOK_EQ)) {
+                TokenType t = ts_peek().type;
+                if (t == TOK_INT || t == TOK_FLOAT || t == TOK_BOOL || t == TOK_STRING || t == TOK_LIST) {
+                    spec.vtype = ts_advance().type;
+                    if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de variable para el flag");
+                    spec.var_name = strdup(ts_advance().lexeme);
+                } else {
+                    error(line, "Se esperaba tipo después de '=' en flag (int, float, bool, string, list)");
+                }
+            }
+
+            if (!ts_match(TOK_LBRACE)) error(line, "Se esperaba '{' después de la especificación del flag");
+            parse_flag_body_tokens(&spec.body_tokens, &spec.body_count);
         }
-        if (!ts_match(TOK_LBRACE)) error(line, "Se esperaba '{' después de la especificación del flag");
-        spec.block = parse_block("}");
-        if (!ts_match(TOK_RBRACE)) error(line, "Se esperaba '}' para cerrar el bloque del flag");
         
         node->data.flags.specs = realloc(node->data.flags.specs,
                                           (node->data.flags.spec_count+1)*sizeof(FlagSpec));
@@ -773,7 +830,6 @@ ASTNode *parse_flags() {
         
         ts_skip_newlines();
         if (ts_peek().type == TOK_COMMA) { ts_advance(); ts_skip_newlines(); }
-        else break;
     }
     return node;
 }
@@ -789,7 +845,8 @@ NodeList parse_block(const char *terminator) {
 
         ASTNode *stmt = NULL;
 
-        if (t.type == TOK_IDENT && strcmp(t.lexeme, "flags") == 0) {
+        /* flags como palabra reservada */
+        if (t.type == TOK_FLAG) {
             ts_advance();
             stmt = parse_flags();
             nodelist_add(&block, stmt);
@@ -820,11 +877,9 @@ NodeList parse_block(const char *terminator) {
             stmt->data.while_stmt.body = body;
         } else if (t.type == TOK_FOR) {
             ts_advance();
-            // Detectar for-in: for IDENT in ...
             if (ts_peek().type == TOK_IDENT && ts.pos+1 < ts.count && ts.tokens[ts.pos+1].type == TOK_IN) {
-                // for-in
                 char *varname = strdup(ts_advance().lexeme);
-                ts_advance(); // consumir 'in'
+                ts_advance();
                 ASTNode *list_expr = parse_expression(0);
                 if (!ts_match(TOK_THEN)) error(t.line, "Se esperaba 'then'");
                 NodeList body = parse_block("fi");
@@ -834,7 +889,6 @@ NodeList parse_block(const char *terminator) {
                 stmt->data.for_in.list_expr = list_expr;
                 stmt->data.for_in.body = body;
             } else {
-                // for clásico
                 int vtype = 0;
                 if (ts_peek().type == TOK_INT || ts_peek().type == TOK_FLOAT || ts_peek().type == TOK_BOOL || ts_peek().type == TOK_STRING || ts_peek().type == TOK_LIST)
                     vtype = ts_advance().type;
@@ -963,7 +1017,6 @@ NodeList parse_block(const char *terminator) {
             bool is_cmd = false;
             char *cmd_str = NULL;
 
-            // Si el siguiente token es un identificador igual al nombre de la variable -> forzar expresión
             if (ts_peek().type == TOK_IDENT && strcmp(ts_peek().lexeme, vname) == 0) {
                 value = parse_expression(0);
             } else if (ts_peek().type == TOK_IDENT) {
@@ -1033,7 +1086,6 @@ NodeList parse_block(const char *terminator) {
                 bool is_cmd = false;
                 char *cmd_str = NULL;
 
-                // Si el siguiente token es un identificador igual al nombre de la variable -> forzar expresión
                 if (ts_peek().type == TOK_IDENT && strcmp(ts_peek().lexeme, vname) == 0) {
                     value = parse_expression(0);
                 } else if (ts_peek().type == TOK_IDENT) {
@@ -1160,6 +1212,16 @@ void exec_block(NodeList *block);
 
 int script_argc;
 char **script_argv;
+
+static void exec_flag_spec(FlagSpec *spec) {
+    TokenStream saved_ts = ts;
+    ts.tokens = spec->body_tokens;
+    ts.count = spec->body_count;
+    ts.pos = 0;
+    NodeList flag_body = parse_block(NULL);
+    exec_block(&flag_body);
+    ts = saved_ts;
+}
 
 void exec_block(NodeList *block) {
     for (int i = 0; i < block->count; i++) {
@@ -1375,10 +1437,20 @@ void exec_block(NodeList *block) {
             }
             case NODE_FLAGS: {
                 int mode = stmt->data.flags.mode;
+                bool *handled = calloc(script_argc, sizeof(bool));
+                FlagSpec *catch_all = NULL;
+                for (int s = 0; s < stmt->data.flags.spec_count; s++) {
+                    if (stmt->data.flags.specs[s].catch_all) {
+                        catch_all = &stmt->data.flags.specs[s];
+                        break;
+                    }
+                }
+
                 if (mode == 1) {
                     int arg_idx = 1;
                     for (int s = 0; s < stmt->data.flags.spec_count; s++) {
                         FlagSpec *spec = &stmt->data.flags.specs[s];
+                        if (spec->catch_all) continue;
                         if (arg_idx >= script_argc) break;
                         if (spec->vtype && spec->var_name) {
                             char *val_str = script_argv[arg_idx];
@@ -1407,8 +1479,17 @@ void exec_block(NodeList *block) {
                             }
                             scope_define(current_scope, spec->var_name, spec->vtype, v);
                         }
-                        exec_block(&spec->block);
+                        exec_flag_spec(spec);
+                        handled[arg_idx] = true;
                         arg_idx++;
+                    }
+                    if (catch_all) {
+                        for (int a = 1; a < script_argc; a++) {
+                            if (!handled[a]) {
+                                scope_define(current_scope, "_", 0, val_string(script_argv[a]));
+                                exec_flag_spec(catch_all);
+                            }
+                        }
                     }
                 } else {
                     for (int a = 1; a < script_argc; a++) {
@@ -1416,8 +1497,11 @@ void exec_block(NodeList *block) {
                         char *arg_dup = strdup(arg);
                         char *eq_pos = strchr(arg_dup, '=');
                         if (eq_pos) *eq_pos = '\0';
+                        bool matched = false;
+
                         for (int s = 0; s < stmt->data.flags.spec_count; s++) {
                             FlagSpec *spec = &stmt->data.flags.specs[s];
+                            if (spec->catch_all) continue;
                             for (int n = 0; n < spec->name_count; n++) {
                                 if (strcmp(arg_dup, spec->names[n]) == 0) {
                                     if (spec->vtype && spec->var_name) {
@@ -1447,16 +1531,46 @@ void exec_block(NodeList *block) {
                                         }
                                         scope_define(current_scope, spec->var_name, spec->vtype, v);
                                     }
-                                    exec_block(&spec->block);
-                                    free(arg_dup);
-                                    goto next_arg;
+                                    exec_flag_spec(spec);
+                                    handled[a] = true;
+                                    matched = true;
+                                    break;
                                 }
                             }
+                            if (matched) break;
+                        }
+
+                        if (!matched && arg_dup[0] == '-' && arg_dup[1] != '-' && strlen(arg_dup) > 2) {
+                            for (int c = 1; arg_dup[c] != '\0'; c++) {
+                                char short_name[3] = {'-', arg_dup[c], '\0'};
+                                bool found = false;
+                                for (int s = 0; s < stmt->data.flags.spec_count; s++) {
+                                    FlagSpec *spec = &stmt->data.flags.specs[s];
+                                    if (spec->catch_all) continue;
+                                    for (int n = 0; n < spec->name_count; n++) {
+                                        if (strcmp(short_name, spec->names[n]) == 0) {
+                                            exec_flag_spec(spec);
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (found) break;
+                                }
+                                if (!found && catch_all) {
+                                    scope_define(current_scope, "_", 0, val_string(short_name));
+                                    exec_flag_spec(catch_all);
+                                }
+                            }
+                            handled[a] = true;
+                        } else if (!matched && catch_all) {
+                            scope_define(current_scope, "_", 0, val_string(arg));
+                            exec_flag_spec(catch_all);
+                            handled[a] = true;
                         }
                         free(arg_dup);
-                        next_arg: ;
                     }
                 }
+                free(handled);
                 break;
             }
             default: error(stmt->line, "Sentencia no implementada");
@@ -1511,7 +1625,6 @@ Value eval_expr(ASTNode *expr) {
 
             Value left = eval_expr(expr->data.binop.left);
 
-            // Inserción en lista: lista + valor[índice]
             if (left.type == VAL_LIST && expr->data.binop.op == TOK_PLUS &&
                 expr->data.binop.right->kind == NODE_INDEX) {
                 ASTNode *idx_node = expr->data.binop.right;
@@ -1530,7 +1643,6 @@ Value eval_expr(ASTNode *expr) {
 
             Value right = eval_expr(expr->data.binop.right);
 
-            // Eliminación en lista: lista - índice
             if (left.type == VAL_LIST && expr->data.binop.op == TOK_MINUS && right.type == VAL_INT) {
                 int pos = right.data.ival;
                 Value new_list = val_list_copy(&left);
@@ -1542,7 +1654,6 @@ Value eval_expr(ASTNode *expr) {
                 return new_list;
             }
 
-            // Resto de operaciones
             if (left.type == VAL_STRING || right.type == VAL_STRING) {
                 char buf[1024] = {0};
                 if (left.type == VAL_STRING) strcat(buf, left.data.sval);
@@ -1768,7 +1879,6 @@ Value eval_expr(ASTNode *expr) {
                 if (i < 1 || i > base.data.list.count) error(expr->line, "Índice fuera de rango");
                 return base.data.list.items[i-1];
             } else if (base.type == VAL_STRING) {
-                // Para inserciones en lista se devuelve la cadena completa
                 return base;
             }
             error(expr->line, "No se puede indexar este tipo de valor");
