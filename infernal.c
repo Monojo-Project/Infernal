@@ -3,7 +3,10 @@
  * Infernal: lenguaje de programación inspirado en Bash + Lua
  * GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
  *
- * Corrección definitiva del parser de flags y validación de nombres.
+ * Correcciones:
+ *   - $var y {var} en asignaciones obtienen el valor actual (copia por valor).
+ *   - Expansión de $VAR y {VAR} en comandos.
+ *   - Flags flexibles, elseif/elif, listas, etc.
  */
 
 #include <stdio.h>
@@ -37,7 +40,7 @@ typedef enum {
     TOK_LOCAL, TOK_GLOBAL,
     TOK_AND, TOK_OR,
     TOK_IN,
-    TOK_FLAG
+    TOK_FLAG               /* "flag" o "flags" */
 } TokenType;
 
 typedef struct {
@@ -492,6 +495,19 @@ void tokenize_file(FILE *fp) {
                 continue;
             }
 
+            /* Captura de $var como un solo token */
+            if (*p == '$' && (isalpha(*(p+1)) || *(p+1) == '_')) {
+                char *start = p;
+                p++; // saltar $
+                while (isalnum(*p) || *p == '_') p++;
+                int len = p - start;
+                char buf[256];
+                memcpy(buf, start, len);
+                buf[len] = '\0';
+                ts_add((Token){TOK_IDENT, strdup(buf), lineno});
+                continue;
+            }
+
             if (isalpha(*p) || *p == '_' || *p == '.' || *p == '~') {
                 char *start = p;
                 while (isalnum(*p) || *p == '_' || *p == '/' || *p == '.' || *p == '-' || *p == '~') p++;
@@ -610,6 +626,18 @@ ASTNode *parse_primary() {
             } while (ts_match(TOK_COMMA));
             if (!ts_match(TOK_RBRACKET)) error(t.line, "Se esperaba ']'");
         }
+        return n;
+    }
+    /* Soporte para {ident} como variable */
+    if (t.type == TOK_LBRACE) {
+        ts_advance(); // consume '{'
+        if (ts_peek().type != TOK_IDENT) error(t.line, "Se esperaba nombre de variable tras '{'");
+        char *name = strdup(ts_advance().lexeme);
+        if (!ts_match(TOK_RBRACE)) error(t.line, "Se esperaba '}'");
+        // Crear un NODE_VAR especial que indique que debe ser evaluado (sin el $)
+        ASTNode *n = node_create(NODE_VAR, t.line);
+        // Guardamos el nombre sin llaves; el evaluador lo buscará directamente
+        n->data.var.name = name;
         return n;
     }
     if (t.type == TOK_LPAREN) {
@@ -736,7 +764,6 @@ void parse_flag_body_tokens(Token **body_tokens, int *body_count) {
     }
 }
 
-/* Función auxiliar: ¿el lexema es un nombre válido para flag? */
 static bool is_valid_flag_name(const char *s) {
     return s && (isalpha(s[0]) || s[0] == '_');
 }
@@ -1054,13 +1081,19 @@ NodeList parse_block(const char *terminator) {
                 value = parse_expression(0);
             } else if (ts_peek().type == TOK_IDENT) {
                 char *rhs_name = ts_peek().lexeme;
-                if (!scope_find_script(current_scope, rhs_name) && !func_lookup(rhs_name)) {
+                /* Si el identificador empieza con $, es una variable, no un comando */
+                if (rhs_name[0] == '$') {
+                    value = parse_expression(0);
+                } else if (!scope_find_script(current_scope, rhs_name) && !func_lookup(rhs_name)) {
                     is_cmd = true;
                     cmd_str = extract_command_string(t.line);
                     while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) ts_advance();
                 } else {
                     value = parse_expression(0);
                 }
+            } else if (ts_peek().type == TOK_LBRACE) {
+                /* {var} es una expresión */
+                value = parse_expression(0);
             } else if (ts_peek().type == TOK_LBRACKET || ts_peek().type == TOK_LPAREN ||
                        ts_peek().type == TOK_NUMBER || ts_peek().type == TOK_STRING_LITERAL ||
                        ts_peek().type == TOK_TRUE || ts_peek().type == TOK_FALSE ||
@@ -1123,13 +1156,18 @@ NodeList parse_block(const char *terminator) {
                     value = parse_expression(0);
                 } else if (ts_peek().type == TOK_IDENT) {
                     char *rhs_name = ts_peek().lexeme;
-                    if (!scope_find_script(current_scope, rhs_name) && !func_lookup(rhs_name)) {
+                    /* Si el identificador empieza con $, es una variable */
+                    if (rhs_name[0] == '$') {
+                        value = parse_expression(0);
+                    } else if (!scope_find_script(current_scope, rhs_name) && !func_lookup(rhs_name)) {
                         is_cmd = true;
                         cmd_str = extract_command_string(saved_t.line);
                         while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) ts_advance();
                     } else {
                         value = parse_expression(0);
                     }
+                } else if (ts_peek().type == TOK_LBRACE) {
+                    value = parse_expression(0);
                 } else if (ts_peek().type == TOK_LBRACKET || ts_peek().type == TOK_LPAREN ||
                            ts_peek().type == TOK_NUMBER || ts_peek().type == TOK_STRING_LITERAL ||
                            ts_peek().type == TOK_TRUE || ts_peek().type == TOK_FALSE ||
@@ -1183,12 +1221,24 @@ NodeList parse_block(const char *terminator) {
                     char cmd[4096] = {0};
                     Token first = ts_advance();
                     strcpy(cmd, first.lexeme);
+                    bool last_was_dash = (first.type == TOK_MINUS);
+                    bool last_was_lbrace = (first.type == TOK_LBRACE);
                     while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                         Token ct = ts_advance();
-                        strcat(cmd, " ");
+                        bool prepend_space = true;
+                        if (last_was_lbrace || ct.type == TOK_RBRACE) {
+                            prepend_space = false;
+                        } else if (last_was_dash) {
+                            prepend_space = false;
+                        }
+                        if (prepend_space) strcat(cmd, " ");
                         if (ct.type == TOK_STRING_LITERAL) {
                             strcat(cmd, "\""); strcat(cmd, ct.lexeme); strcat(cmd, "\"");
-                        } else strcat(cmd, ct.lexeme);
+                        } else {
+                            strcat(cmd, ct.lexeme);
+                        }
+                        last_was_lbrace = (ct.type == TOK_LBRACE);
+                        last_was_dash = (ct.type == TOK_MINUS);
                     }
                     stmt = node_create(NODE_CMD_STMT, t.line);
                     stmt->data.cmd_stmt.cmd = strdup(cmd);
@@ -1214,12 +1264,24 @@ NodeList parse_block(const char *terminator) {
                 char cmd[4096] = {0};
                 Token first = ts_advance();
                 strcpy(cmd, first.lexeme);
+                bool last_was_dash = (first.type == TOK_MINUS);
+                bool last_was_lbrace = (first.type == TOK_LBRACE);
                 while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                     Token ct = ts_advance();
-                    strcat(cmd, " ");
+                    bool prepend_space = true;
+                    if (last_was_lbrace || ct.type == TOK_RBRACE) {
+                        prepend_space = false;
+                    } else if (last_was_dash) {
+                        prepend_space = false;
+                    }
+                    if (prepend_space) strcat(cmd, " ");
                     if (ct.type == TOK_STRING_LITERAL) {
                         strcat(cmd, "\""); strcat(cmd, ct.lexeme); strcat(cmd, "\"");
-                    } else strcat(cmd, ct.lexeme);
+                    } else {
+                        strcat(cmd, ct.lexeme);
+                    }
+                    last_was_lbrace = (ct.type == TOK_LBRACE);
+                    last_was_dash = (ct.type == TOK_MINUS);
                 }
                 stmt = node_create(NODE_CMD_STMT, t.line);
                 stmt->data.cmd_stmt.cmd = strdup(cmd);
@@ -1368,7 +1430,7 @@ void exec_block(NodeList *block) {
                 char *expanded = expand_command(cmd);
                 int ret = system(expanded);
                 if (ret != 0) {
-                    fprintf(stderr, "falló: %s\n", cmd);
+                    fprintf(stderr, "falló: %s (expandido: %s)\n", cmd, expanded);
                     exit(1);
                 }
                 free(expanded);
@@ -1698,8 +1760,13 @@ Value eval_expr(ASTNode *expr) {
             return val_make_null();
         }
         case NODE_VAR: {
-            VarEntry *e = scope_find(current_scope, expr->data.var.name);
-            if (!e) error(expr->line, "Variable no definida: %s", expr->data.var.name);
+            const char *name = expr->data.var.name;
+            if (name[0] == '$') {
+                name++; // Quita el '$'
+                if (*name == '\0') error(expr->line, "Nombre de variable vacío tras $");
+            }
+            VarEntry *e = scope_find(current_scope, name);
+            if (!e) error(expr->line, "Variable no definida: %s", name);
             return e->value;
         }
         case NODE_LIST: {
