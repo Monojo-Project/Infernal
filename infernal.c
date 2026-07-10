@@ -1,12 +1,16 @@
+
 /*
  * infernal.c
  * Infernal: lenguaje de programación inspirado en Bash + Lua
  * GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
  *
  * Correcciones:
- *   - "flags" y "flag" son palabras reservadas (TOK_FLAG).
+ *   - "flag" / "flags" como palabra reservada (TOK_FLAG).
+ *   - Soporte para "elseif" y "elif" (TOK_ELSEIF).
  *   - Los nombres de flags se guardan completos (--name, -n, etc.).
  *   - El catch-all '*' funciona.
+ *   - Permite espacio entre flag(s) y '('.
+ *   - eval_expr completo con todas las operaciones y llamadas built-in.
  */
 
 #include <stdio.h>
@@ -31,7 +35,8 @@ typedef enum {
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACKET, TOK_RBRACKET,
     TOK_LBRACE, TOK_RBRACE,
     TOK_SEMI, TOK_COMMA, TOK_PIPE, TOK_GT_OP, TOK_LT_OP, TOK_GGT,
-    TOK_IF, TOK_THEN, TOK_FI, TOK_ELSE, TOK_WHILE, TOK_FOR,
+    TOK_IF, TOK_THEN, TOK_FI, TOK_ELSE, TOK_ELSEIF,
+    TOK_WHILE, TOK_FOR,
     TOK_FUNCTION, TOK_RETURN, TOK_BREAK, TOK_REPEAT,
     TOK_IMPORT, TOK_TRY, TOK_CATCH,
     TOK_INT, TOK_FLOAT, TOK_BOOL, TOK_STRING, TOK_LIST,
@@ -39,7 +44,7 @@ typedef enum {
     TOK_LOCAL, TOK_GLOBAL,
     TOK_AND, TOK_OR,
     TOK_IN,
-    TOK_FLAG               /* "flags" o "flag" */
+    TOK_FLAG               /* "flag" o "flags" */
 } TokenType;
 
 typedef struct {
@@ -336,6 +341,7 @@ typedef struct {
 
 Keyword keywords[] = {
     {"if", TOK_IF}, {"then", TOK_THEN}, {"fi", TOK_FI}, {"else", TOK_ELSE},
+    {"elseif", TOK_ELSEIF}, {"elif", TOK_ELSEIF},
     {"while", TOK_WHILE}, {"for", TOK_FOR},
     {"function", TOK_FUNCTION}, {"return", TOK_RETURN},
     {"break", TOK_BREAK}, {"repeat", TOK_REPEAT},
@@ -347,7 +353,7 @@ Keyword keywords[] = {
     {"local", TOK_LOCAL}, {"global", TOK_GLOBAL},
     {"and", TOK_AND}, {"or", TOK_OR},
     {"in", TOK_IN},
-    {"flag", TOK_FLAG}, {"flags", TOK_FLAG},   /* ambas formas */
+    {"flag", TOK_FLAG}, {"flags", TOK_FLAG},
     {NULL, TOK_EOF}
 };
 
@@ -514,6 +520,7 @@ void tokenize_file(FILE *fp) {
 ASTNode *parse_expression(int);
 NodeList parse_block(const char *terminator);
 ASTNode *parse_flags(void);
+ASTNode *parse_if_statement(void);
 
 char *current_import_prefix = NULL;
 
@@ -770,13 +777,12 @@ ASTNode *parse_flags() {
             if (!ts_match(TOK_LBRACE)) error(line, "Se esperaba '{' después de '*'");
             parse_flag_body_tokens(&spec.body_tokens, &spec.body_count);
         } else {
-            /* leer nombre completo con guiones */
             char full_name[128] = "";
             if (ts_peek().type == TOK_MINUS) {
-                ts_advance();                    /* consume primer '-' */
+                ts_advance();
                 strcat(full_name, "-");
                 if (ts_peek().type == TOK_MINUS) {
-                    ts_advance();                /* consume segundo '-' */
+                    ts_advance();
                     strcat(full_name, "-");
                 }
                 if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de flag después de '-' o '--'");
@@ -788,7 +794,6 @@ ASTNode *parse_flags() {
                 error(line, "Se esperaba '--' o '-' para comenzar un flag");
             }
 
-            /* alias con | */
             while (ts_peek().type == TOK_PIPE) {
                 ts_advance();
                 char alias_name[128] = "";
@@ -808,7 +813,6 @@ ASTNode *parse_flags() {
                 }
             }
 
-            /* valor con tipo */
             if (ts_match(TOK_EQ)) {
                 TokenType t = ts_peek().type;
                 if (t == TOK_INT || t == TOK_FLOAT || t == TOK_BOOL || t == TOK_STRING || t == TOK_LIST) {
@@ -834,6 +838,47 @@ ASTNode *parse_flags() {
     return node;
 }
 
+ASTNode *parse_if_statement() {
+    Token t = ts_peek();
+    int line = t.line;
+    ts_advance(); // consumir 'if'
+    ASTNode *cond = parse_expression(0);
+    if (!ts_match(TOK_THEN)) error(line, "Se esperaba 'then'");
+    NodeList then_block = parse_block("fi");
+
+    ASTNode *first_if = node_create(NODE_IF, line);
+    first_if->data.if_stmt.cond = cond;
+    first_if->data.if_stmt.then_block = then_block;
+    first_if->data.if_stmt.else_block = (NodeList){NULL,0,0};
+
+    ASTNode *current_if = first_if;
+
+    while (ts_peek().type == TOK_ELSEIF) {
+        ts_advance();
+        ASTNode *elseif_cond = parse_expression(0);
+        if (!ts_match(TOK_THEN)) error(line, "Se esperaba 'then' después de 'elseif'");
+        NodeList elseif_then = parse_block("fi");
+
+        ASTNode *elseif_node = node_create(NODE_IF, line);
+        elseif_node->data.if_stmt.cond = elseif_cond;
+        elseif_node->data.if_stmt.then_block = elseif_then;
+        elseif_node->data.if_stmt.else_block = (NodeList){NULL,0,0};
+
+        NodeList wrapper = {NULL, 0, 0};
+        nodelist_add(&wrapper, elseif_node);
+        current_if->data.if_stmt.else_block = wrapper;
+        current_if = elseif_node;
+    }
+
+    if (ts_match(TOK_ELSE)) {
+        NodeList else_block = parse_block("fi");
+        current_if->data.if_stmt.else_block = else_block;
+    }
+
+    if (!ts_match(TOK_FI)) error(line, "Se esperaba 'fi' al final del bloque if");
+    return first_if;
+}
+
 NodeList parse_block(const char *terminator) {
     NodeList block = {NULL, 0, 0};
     while (1) {
@@ -841,11 +886,12 @@ NodeList parse_block(const char *terminator) {
         Token t = ts_peek();
         if (t.type == TOK_EOF) break;
         if (terminator && lookup_keyword(terminator) == t.type) break;
+        if (terminator && strcmp(terminator, "fi") == 0 &&
+            (t.type == TOK_ELSE || t.type == TOK_ELSEIF)) break;
         if (terminator && strcmp(terminator, "}") == 0 && t.type == TOK_RBRACE) break;
 
         ASTNode *stmt = NULL;
 
-        /* flags como palabra reservada */
         if (t.type == TOK_FLAG) {
             ts_advance();
             stmt = parse_flags();
@@ -855,17 +901,7 @@ NodeList parse_block(const char *terminator) {
         }
 
         if (t.type == TOK_IF) {
-            ts_advance();
-            ASTNode *cond = parse_expression(0);
-            if (!ts_match(TOK_THEN)) error(t.line, "Se esperaba 'then'");
-            NodeList then_block = parse_block("fi");
-            NodeList else_block = {NULL,0,0};
-            if (ts_match(TOK_ELSE)) else_block = parse_block("fi");
-            if (!ts_match(TOK_FI)) error(t.line, "Se esperaba 'fi'");
-            stmt = node_create(NODE_IF, t.line);
-            stmt->data.if_stmt.cond = cond;
-            stmt->data.if_stmt.then_block = then_block;
-            stmt->data.if_stmt.else_block = else_block;
+            stmt = parse_if_statement();
         } else if (t.type == TOK_WHILE) {
             ts_advance();
             ASTNode *cond = parse_expression(0);
@@ -1213,6 +1249,17 @@ void exec_block(NodeList *block);
 int script_argc;
 char **script_argv;
 
+static bool val_is_truthy(Value v) {
+    switch (v.type) {
+        case VAL_BOOL:   return v.data.bval;
+        case VAL_INT:    return v.data.ival != 0;
+        case VAL_FLOAT:  return v.data.fval != 0.0;
+        case VAL_STRING: return strlen(v.data.sval) > 0;
+        case VAL_LIST:   return v.data.list.count > 0;
+        default:         return false;
+    }
+}
+
 static void exec_flag_spec(FlagSpec *spec) {
     TokenStream saved_ts = ts;
     ts.tokens = spec->body_tokens;
@@ -1330,10 +1377,7 @@ void exec_block(NodeList *block) {
             }
             case NODE_IF: {
                 Value cond = eval_expr(stmt->data.if_stmt.cond);
-                bool truthy = (cond.type == VAL_BOOL) ? cond.data.bval :
-                              (cond.type == VAL_INT) ? cond.data.ival != 0 :
-                              (cond.type == VAL_FLOAT) ? cond.data.fval != 0.0 :
-                              (cond.type == VAL_STRING) ? strlen(cond.data.sval) > 0 : false;
+                bool truthy = val_is_truthy(cond);
                 Scope *block_scope = scope_new(current_scope);
                 Scope *old_scope = current_scope;
                 current_scope = block_scope;
@@ -1351,10 +1395,7 @@ void exec_block(NodeList *block) {
                         error(stmt->line, "Límite de iteraciones (%d) alcanzado en bucle while", max_loop_iterations);
                     iter_count++;
                     Value cond = eval_expr(stmt->data.while_stmt.cond);
-                    bool truthy = (cond.type == VAL_BOOL) ? cond.data.bval :
-                                  (cond.type == VAL_INT) ? cond.data.ival != 0 :
-                                  (cond.type == VAL_FLOAT) ? cond.data.fval != 0.0 :
-                                  (cond.type == VAL_STRING) ? strlen(cond.data.sval) > 0 : false;
+                    bool truthy = val_is_truthy(cond);
                     if (!truthy) break;
                     Scope *block_scope = scope_new(current_scope);
                     Scope *old_scope = current_scope;
@@ -1379,10 +1420,7 @@ void exec_block(NodeList *block) {
                         error(stmt->line, "Límite de iteraciones (%d) alcanzado en bucle for", max_loop_iterations);
                     iter_count++;
                     Value cond = eval_expr(stmt->data.for_stmt.cond);
-                    bool truthy = (cond.type == VAL_BOOL) ? cond.data.bval :
-                                  (cond.type == VAL_INT) ? cond.data.ival != 0 :
-                                  (cond.type == VAL_FLOAT) ? cond.data.fval != 0.0 :
-                                  (cond.type == VAL_STRING) ? strlen(cond.data.sval) > 0 : false;
+                    bool truthy = val_is_truthy(cond);
                     if (!truthy) break;
                     exec_block(&stmt->data.for_stmt.body);
                     if (control_flow == CF_BREAK) { control_flow = CF_NONE; break; }
@@ -1582,9 +1620,9 @@ void exec_block(NodeList *block) {
 Value eval_expr(ASTNode *expr) {
     switch (expr->kind) {
         case NODE_LITERAL: {
-            if (expr->data.lit.type == TOK_INT) return val_int(expr->data.lit.ival);
-            if (expr->data.lit.type == TOK_FLOAT) return val_float(expr->data.lit.fval);
-            if (expr->data.lit.type == TOK_BOOL) return val_bool(expr->data.lit.bval);
+            if (expr->data.lit.type == TOK_INT)    return val_int(expr->data.lit.ival);
+            if (expr->data.lit.type == TOK_FLOAT)  return val_float(expr->data.lit.fval);
+            if (expr->data.lit.type == TOK_BOOL)   return val_bool(expr->data.lit.bval);
             if (expr->data.lit.type == TOK_STRING) return val_string(expr->data.lit.sval);
             return val_make_null();
         }
@@ -1604,21 +1642,13 @@ Value eval_expr(ASTNode *expr) {
         case NODE_BINOP: {
             if (expr->data.binop.op == TOK_AND) {
                 Value left = eval_expr(expr->data.binop.left);
-                bool truthy = (left.type == VAL_BOOL) ? left.data.bval :
-                              (left.type == VAL_INT) ? left.data.ival != 0 :
-                              (left.type == VAL_FLOAT) ? left.data.fval != 0.0 :
-                              (left.type == VAL_STRING) ? strlen(left.data.sval) > 0 : false;
-                if (!truthy) return val_bool(false);
+                if (!val_is_truthy(left)) return val_bool(false);
                 Value right = eval_expr(expr->data.binop.right);
                 return right;
             }
             if (expr->data.binop.op == TOK_OR) {
                 Value left = eval_expr(expr->data.binop.left);
-                bool truthy = (left.type == VAL_BOOL) ? left.data.bval :
-                              (left.type == VAL_INT) ? left.data.ival != 0 :
-                              (left.type == VAL_FLOAT) ? left.data.fval != 0.0 :
-                              (left.type == VAL_STRING) ? strlen(left.data.sval) > 0 : false;
-                if (truthy) return left;
+                if (val_is_truthy(left)) return left;
                 Value right = eval_expr(expr->data.binop.right);
                 return right;
             }
@@ -1632,8 +1662,8 @@ Value eval_expr(ASTNode *expr) {
                 Value index_val = eval_expr(idx_node->data.idx.index);
                 int pos = (index_val.type == VAL_INT) ? index_val.data.ival : 1;
                 Value new_list = val_list_copy(&left);
-                if (pos < 1 || pos > new_list.data.list.count + 1) pos = new_list.data.list.count + 1;
-                if (pos-1 > new_list.data.list.count) pos = new_list.data.list.count+1;
+                if (pos < 1 || pos > new_list.data.list.count + 1)
+                    pos = new_list.data.list.count + 1;
                 val_list_append(&new_list, val_make_null());
                 for (int i = new_list.data.list.count-1; i > pos-1; i--)
                     new_list.data.list.items[i] = new_list.data.list.items[i-1];
@@ -1655,11 +1685,15 @@ Value eval_expr(ASTNode *expr) {
             }
 
             if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                char buf[1024] = {0};
+                char buf[4096] = {0};
                 if (left.type == VAL_STRING) strcat(buf, left.data.sval);
-                else sprintf(buf + strlen(buf), "%d", left.type == VAL_INT ? left.data.ival : left.type == VAL_FLOAT ? (int)left.data.fval : left.data.bval ? 1 : 0);
+                else sprintf(buf + strlen(buf), "%d", left.type == VAL_INT ? left.data.ival :
+                                 left.type == VAL_FLOAT ? (int)left.data.fval :
+                                 left.data.bval ? 1 : 0);
                 if (right.type == VAL_STRING) strcat(buf, right.data.sval);
-                else sprintf(buf + strlen(buf), "%d", right.type == VAL_INT ? right.data.ival : right.type == VAL_FLOAT ? (int)right.data.fval : right.data.bval ? 1 : 0);
+                else sprintf(buf + strlen(buf), "%d", right.type == VAL_INT ? right.data.ival :
+                                 right.type == VAL_FLOAT ? (int)right.data.fval :
+                                 right.data.bval ? 1 : 0);
                 return val_string(buf);
             }
 
@@ -1681,8 +1715,12 @@ Value eval_expr(ASTNode *expr) {
                 }
             }
 
-            double lv = left.type == VAL_INT ? left.data.ival : left.type == VAL_FLOAT ? left.data.fval : left.data.bval ? 1.0 : 0.0;
-            double rv = right.type == VAL_INT ? right.data.ival : right.type == VAL_FLOAT ? right.data.fval : right.data.bval ? 1.0 : 0.0;
+            double lv = (left.type == VAL_INT) ? left.data.ival :
+                        (left.type == VAL_FLOAT) ? left.data.fval :
+                        (left.type == VAL_BOOL) ? (left.data.bval ? 1.0 : 0.0) : 0.0;
+            double rv = (right.type == VAL_INT) ? right.data.ival :
+                        (right.type == VAL_FLOAT) ? right.data.fval :
+                        (right.type == VAL_BOOL) ? (right.data.bval ? 1.0 : 0.0) : 0.0;
             switch (expr->data.binop.op) {
                 case TOK_PLUS: return val_float(lv + rv);
                 case TOK_MINUS: return val_float(lv - rv);
@@ -1691,10 +1729,10 @@ Value eval_expr(ASTNode *expr) {
                 case TOK_PERCENT: if (rv == 0) error(expr->line, "Módulo por cero"); return val_float((int)lv % (int)rv);
                 case TOK_EEQ: return val_bool(lv == rv);
                 case TOK_NEQ: return val_bool(lv != rv);
-                case TOK_LT: return val_bool(lv < rv);
-                case TOK_GT: return val_bool(lv > rv);
-                case TOK_LE: return val_bool(lv <= rv);
-                case TOK_GE: return val_bool(lv >= rv);
+                case TOK_LT:  return val_bool(lv < rv);
+                case TOK_GT:  return val_bool(lv > rv);
+                case TOK_LE:  return val_bool(lv <= rv);
+                case TOK_GE:  return val_bool(lv >= rv);
                 default: error(expr->line, "Operador no soportado");
             }
             break;
@@ -1702,6 +1740,7 @@ Value eval_expr(ASTNode *expr) {
         case NODE_CALL: {
             ASTNode *func = func_lookup(expr->data.call.name);
             if (!func) error(expr->line, "Función no definida: %s", expr->data.call.name);
+
             if (func == (ASTNode*)1) {
                 const char *name = expr->data.call.name;
                 if (strcmp(name, "exit") == 0) {
@@ -1754,7 +1793,6 @@ Value eval_expr(ASTNode *expr) {
                     printf("Variables accesibles:\n");
                     Scope *s = current_scope;
                     while (s && s != super_global_scope) {
-                        const char *ambito = "script";
                         for (VarEntry *e = s->vars; e; e = e->next) {
                             printf("  %s: ", e->name);
                             switch (e->value.type) {
@@ -1780,13 +1818,10 @@ Value eval_expr(ASTNode *expr) {
                                 }
                                 default: printf("[?]");
                             }
-                            printf(" (%s, %s)\n",
-                                   e->vtype == TOK_INT ? "int" :
-                                   e->vtype == TOK_FLOAT ? "float" :
-                                   e->vtype == TOK_BOOL ? "bool" :
-                                   e->vtype == TOK_STRING ? "string" :
-                                   e->vtype == TOK_LIST ? "list" : "?",
-                                   ambito);
+                            printf(" (%s, script)\n",
+                                   e->vtype == TOK_INT ? "int" : e->vtype == TOK_FLOAT ? "float" :
+                                   e->vtype == TOK_BOOL ? "bool" : e->vtype == TOK_STRING ? "string" :
+                                   e->vtype == TOK_LIST ? "list" : "?");
                         }
                         s = s->parent;
                     }
@@ -1797,34 +1832,16 @@ Value eval_expr(ASTNode *expr) {
                             case VAL_FLOAT: printf("%g", e->value.data.fval); break;
                             case VAL_BOOL: printf("%s", e->value.data.bval ? "true" : "false"); break;
                             case VAL_STRING: printf("\"%s\"", e->value.data.sval); break;
-                            case VAL_LIST: {
-                                printf("[");
-                                for (int j = 0; j < e->value.data.list.count; j++) {
-                                    if (j > 0) printf(", ");
-                                    Value *item = &e->value.data.list.items[j];
-                                    switch (item->type) {
-                                        case VAL_INT: printf("%d", item->data.ival); break;
-                                        case VAL_FLOAT: printf("%g", item->data.fval); break;
-                                        case VAL_BOOL: printf("%s", item->data.bval ? "true" : "false"); break;
-                                        case VAL_STRING: printf("\"%s\"", item->data.sval); break;
-                                        default: printf("?");
-                                    }
-                                }
-                                printf("]");
-                                break;
-                            }
                             default: printf("[?]");
                         }
-                        printf(" (%s, %s)\n",
-                               e->vtype == TOK_INT ? "int" :
-                               e->vtype == TOK_FLOAT ? "float" :
-                               e->vtype == TOK_BOOL ? "bool" :
-                               e->vtype == TOK_STRING ? "string" :
-                               e->vtype == TOK_LIST ? "list" : "?",
-                               "global");
+                        printf(" (%s, global)\n",
+                               e->vtype == TOK_INT ? "int" : e->vtype == TOK_FLOAT ? "float" :
+                               e->vtype == TOK_BOOL ? "bool" : e->vtype == TOK_STRING ? "string" :
+                               e->vtype == TOK_LIST ? "list" : "?");
                     }
                     return val_make_null();
                 }
+
                 const char *color = "";
                 if (strcmp(name, "warn") == 0) color = "\033[33m";
                 else if (strcmp(name, "error") == 0) color = "\033[31m";
@@ -1834,7 +1851,7 @@ Value eval_expr(ASTNode *expr) {
                     Value v = eval_expr(expr->data.call.args[i]);
                     if (v.type == VAL_LIST) {
                         for (int j = 0; j < v.data.list.count; j++) {
-                            if (j > 0) printf(", ");
+                            if (j > 0) printf(" ");
                             Value item = v.data.list.items[j];
                             switch (item.type) {
                                 case VAL_INT: printf("%d", item.data.ival); break;
@@ -1857,17 +1874,22 @@ Value eval_expr(ASTNode *expr) {
                 printf("\033[0m\n");
                 return val_make_null();
             }
+
+            // Llamada a función definida por el usuario
             Scope *new_scope = scope_new(current_scope);
-            Scope *prev_scope = current_scope; current_scope = new_scope;
+            Scope *prev_scope = current_scope;
+            current_scope = new_scope;
             for (int i = 0; i < func->data.func.param_count; i++) {
-                Value arg = i < expr->data.call.argc ? eval_expr(expr->data.call.args[i]) : val_make_null();
+                Value arg = (i < expr->data.call.argc) ? eval_expr(expr->data.call.args[i]) : val_make_null();
                 scope_define(new_scope, func->data.func.params[i], func->data.func.ptypes[i], arg);
             }
-            int saved_cf = control_flow; Value saved_ret = return_value;
+            int saved_cf = control_flow;
+            Value saved_ret = return_value;
             control_flow = CF_NONE;
             exec_block(&func->data.func.body);
             Value ret = (control_flow == CF_RETURN) ? return_value : val_make_null();
-            control_flow = saved_cf; return_value = saved_ret;
+            control_flow = saved_cf;
+            return_value = saved_ret;
             current_scope = prev_scope;
             return ret;
         }
@@ -1875,19 +1897,24 @@ Value eval_expr(ASTNode *expr) {
             Value base = eval_expr(expr->data.idx.list);
             Value idx = eval_expr(expr->data.idx.index);
             if (base.type == VAL_LIST) {
-                int i = (idx.type == VAL_INT) ? idx.data.ival : 0;
-                if (i < 1 || i > base.data.list.count) error(expr->line, "Índice fuera de rango");
+                int i = (idx.type == VAL_INT) ? idx.data.ival : 1;
+                if (i < 1 || i > base.data.list.count)
+                    error(expr->line, "Índice fuera de rango");
                 return base.data.list.items[i-1];
             } else if (base.type == VAL_STRING) {
-                return base;
+                if (idx.type == VAL_INT && idx.data.ival == 1)
+                    return base;
+                error(expr->line, "Índice de string no soportado");
             }
             error(expr->line, "No se puede indexar este tipo de valor");
         }
-        default: error(expr->line, "Expresión no implementada");
+        default:
+            error(expr->line, "Expresión no implementada");
     }
     return val_make_null();
 }
 
+/* ========================================================================== */
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "Uso: infernal <script.infernal> [argumentos...]\n"); return 1; }
     script_argc = argc;
