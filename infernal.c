@@ -1,16 +1,9 @@
-
 /*
  * infernal.c
  * Infernal: lenguaje de programación inspirado en Bash + Lua
  * GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
  *
- * Correcciones:
- *   - "flag" / "flags" como palabra reservada (TOK_FLAG).
- *   - Soporte para "elseif" y "elif" (TOK_ELSEIF).
- *   - Los nombres de flags se guardan completos (--name, -n, etc.).
- *   - El catch-all '*' funciona.
- *   - Permite espacio entre flag(s) y '('.
- *   - eval_expr completo con todas las operaciones y llamadas built-in.
+ * Corrección definitiva del parser de flags y validación de nombres.
  */
 
 #include <stdio.h>
@@ -44,7 +37,7 @@ typedef enum {
     TOK_LOCAL, TOK_GLOBAL,
     TOK_AND, TOK_OR,
     TOK_IN,
-    TOK_FLAG               /* "flag" o "flags" */
+    TOK_FLAG
 } TokenType;
 
 typedef struct {
@@ -62,13 +55,13 @@ typedef struct {
 } NodeList;
 
 typedef struct FlagSpec {
-    char **names;          /* nombres completos: --name, -n, etc. */
+    char **names;
     int name_count;
-    int vtype;             /* TOK_INT, TOK_FLOAT, ... */
-    char *var_name;        /* nombre de la variable que recibe el valor */
+    int vtype;
+    char *var_name;
     Token *body_tokens;
     int body_count;
-    bool catch_all;        /* flag '*' atrapa el resto */
+    bool catch_all;
 } FlagSpec;
 
 struct ASTNode {
@@ -417,7 +410,7 @@ void tokenize_file(FILE *fp) {
                         p = close + 3;
                         continue;
                     } else {
-                        break;  // comentario de línea
+                        break;
                     }
                 } else {
                     char *close = strstr(p, "###");
@@ -743,95 +736,99 @@ void parse_flag_body_tokens(Token **body_tokens, int *body_count) {
     }
 }
 
+/* Función auxiliar: ¿el lexema es un nombre válido para flag? */
+static bool is_valid_flag_name(const char *s) {
+    return s && (isalpha(s[0]) || s[0] == '_');
+}
+
 ASTNode *parse_flags() {
-    int line = ts_peek().line;
-    if (!ts_match(TOK_LPAREN)) error(line, "Se esperaba '(' después de 'flags'");
+    if (!ts_match(TOK_LPAREN)) error(ts_peek().line, "Se esperaba '(' después de 'flags'");
     ASTNode *mode_expr = parse_expression(0);
-    if (!ts_match(TOK_COMMA)) error(line, "Se esperaba ',' después del modo");
-    
-    ASTNode *node = node_create(NODE_FLAGS, line);
+    if (!ts_match(TOK_COMMA)) error(ts_peek().line, "Se esperaba ',' después del modo");
+
+    ASTNode *node = node_create(NODE_FLAGS, mode_expr->line);
     node->data.flags.mode = 0;
     if (mode_expr->kind == NODE_LITERAL && mode_expr->data.lit.type == TOK_INT)
         node->data.flags.mode = mode_expr->data.lit.ival;
     else
-        error(line, "El modo de flags debe ser 0 o 1");
-    
+        error(mode_expr->line, "El modo de flags debe ser 0 o 1");
+
     node->data.flags.specs = NULL;
     node->data.flags.spec_count = 0;
-    
+
     while (!ts_match(TOK_RPAREN)) {
         ts_skip_newlines();
-        
         FlagSpec spec;
-        spec.names = NULL;
-        spec.name_count = 0;
-        spec.vtype = 0;
-        spec.var_name = NULL;
-        spec.body_tokens = NULL;
-        spec.body_count = 0;
-        spec.catch_all = false;
+        memset(&spec, 0, sizeof(spec));
 
         if (ts_peek().type == TOK_STAR) {
             ts_advance();
             spec.catch_all = true;
-            if (!ts_match(TOK_LBRACE)) error(line, "Se esperaba '{' después de '*'");
+            if (!ts_match(TOK_LBRACE)) error(ts_peek().line, "Se esperaba '{' después de '*'");
             parse_flag_body_tokens(&spec.body_tokens, &spec.body_count);
         } else {
-            char full_name[128] = "";
+            char name_buf[128] = "";
             if (ts_peek().type == TOK_MINUS) {
                 ts_advance();
-                strcat(full_name, "-");
+                strcat(name_buf, "-");
                 if (ts_peek().type == TOK_MINUS) {
                     ts_advance();
-                    strcat(full_name, "-");
+                    strcat(name_buf, "-");
                 }
-                if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de flag después de '-' o '--'");
-                strcat(full_name, ts_advance().lexeme);
-                
-                spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
-                spec.names[spec.name_count-1] = strdup(full_name);
+                if (!is_valid_flag_name(ts_peek().lexeme))
+                    error(ts_peek().line, "Se esperaba nombre del flag después de '-'/'--'");
+                strcat(name_buf, ts_advance().lexeme);
+            } else if (is_valid_flag_name(ts_peek().lexeme)) {
+                strcat(name_buf, ts_advance().lexeme);
             } else {
-                error(line, "Se esperaba '--' o '-' para comenzar un flag");
+                error(ts_peek().line, "Se esperaba un flag (--nombre, -n o nombre)");
             }
+            spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
+            spec.names[spec.name_count-1] = strdup(name_buf);
 
             while (ts_peek().type == TOK_PIPE) {
                 ts_advance();
-                char alias_name[128] = "";
+                char alias_buf[128] = "";
                 if (ts_peek().type == TOK_MINUS) {
                     ts_advance();
-                    strcat(alias_name, "-");
+                    strcat(alias_buf, "-");
                     if (ts_peek().type == TOK_MINUS) {
                         ts_advance();
-                        strcat(alias_name, "-");
+                        strcat(alias_buf, "-");
                     }
-                    if (ts_peek().type != TOK_IDENT) error(line, "Alias debe tener un identificador después de los guiones");
-                    strcat(alias_name, ts_advance().lexeme);
-                    spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
-                    spec.names[spec.name_count-1] = strdup(alias_name);
+                    if (!is_valid_flag_name(ts_peek().lexeme))
+                        error(ts_peek().line, "Se esperaba identificador para el alias");
+                    strcat(alias_buf, ts_advance().lexeme);
+                } else if (is_valid_flag_name(ts_peek().lexeme)) {
+                    strcat(alias_buf, ts_advance().lexeme);
                 } else {
-                    error(line, "Alias debe comenzar con '-' o '--'");
+                    error(ts_peek().line, "Alias debe ser un identificador, con o sin guiones");
                 }
+                spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
+                spec.names[spec.name_count-1] = strdup(alias_buf);
             }
 
             if (ts_match(TOK_EQ)) {
                 TokenType t = ts_peek().type;
                 if (t == TOK_INT || t == TOK_FLOAT || t == TOK_BOOL || t == TOK_STRING || t == TOK_LIST) {
                     spec.vtype = ts_advance().type;
-                    if (ts_peek().type != TOK_IDENT) error(line, "Se esperaba nombre de variable para el flag");
+                    if (!is_valid_flag_name(ts_peek().lexeme))
+                        error(ts_peek().line, "Se esperaba nombre de variable para el flag");
                     spec.var_name = strdup(ts_advance().lexeme);
                 } else {
-                    error(line, "Se esperaba tipo después de '=' en flag (int, float, bool, string, list)");
+                    error(ts_peek().line, "Se esperaba tipo después de '=' en flag (int, float, bool, string, list)");
                 }
             }
 
-            if (!ts_match(TOK_LBRACE)) error(line, "Se esperaba '{' después de la especificación del flag");
+            if (!ts_match(TOK_LBRACE))
+                error(ts_peek().line, "Se esperaba '{' después de la especificación del flag");
             parse_flag_body_tokens(&spec.body_tokens, &spec.body_count);
         }
-        
+
         node->data.flags.specs = realloc(node->data.flags.specs,
                                           (node->data.flags.spec_count+1)*sizeof(FlagSpec));
         node->data.flags.specs[node->data.flags.spec_count++] = spec;
-        
+
         ts_skip_newlines();
         if (ts_peek().type == TOK_COMMA) { ts_advance(); ts_skip_newlines(); }
     }
@@ -841,7 +838,7 @@ ASTNode *parse_flags() {
 ASTNode *parse_if_statement() {
     Token t = ts_peek();
     int line = t.line;
-    ts_advance(); // consumir 'if'
+    ts_advance();
     ASTNode *cond = parse_expression(0);
     if (!ts_match(TOK_THEN)) error(line, "Se esperaba 'then'");
     NodeList then_block = parse_block("fi");
@@ -1260,6 +1257,95 @@ static bool val_is_truthy(Value v) {
     }
 }
 
+static char *get_var_string(const char *name) {
+    VarEntry *e = scope_find(current_scope, name);
+    if (!e) return NULL;
+    Value *v = &e->value;
+    char buf[256];
+    switch (v->type) {
+        case VAL_INT: snprintf(buf, sizeof(buf), "%d", v->data.ival); break;
+        case VAL_FLOAT: snprintf(buf, sizeof(buf), "%g", v->data.fval); break;
+        case VAL_BOOL: return strdup(v->data.bval ? "true" : "false");
+        case VAL_STRING: return strdup(v->data.sval);
+        default: return NULL;
+    }
+    return strdup(buf);
+}
+
+static char *expand_command(const char *cmd) {
+    if (!cmd) return NULL;
+    char *result = strdup(cmd);
+    char *p = result;
+    char *new_result = NULL;
+    size_t new_cap = 0;
+
+    while (*p) {
+        if (*p == '$' && (isalpha(*(p+1)) || *(p+1) == '_')) {
+            char *start = p + 1;
+            char *end = start;
+            while (isalnum(*end) || *end == '_') end++;
+            char name[128];
+            int len = end - start;
+            strncpy(name, start, len);
+            name[len] = '\0';
+            char *val = get_var_string(name);
+            if (val) {
+                size_t prefix_len = p - result;
+                size_t suffix_len = strlen(end);
+                size_t val_len = strlen(val);
+                size_t total = prefix_len + val_len + suffix_len;
+                if (new_cap < total + 1) {
+                    new_cap = total + 256;
+                    new_result = realloc(new_result, new_cap);
+                }
+                memcpy(new_result, result, prefix_len);
+                memcpy(new_result + prefix_len, val, val_len);
+                memcpy(new_result + prefix_len + val_len, end, suffix_len + 1);
+                free(result);
+                result = new_result;
+                p = result + prefix_len + val_len;
+                free(val);
+                continue;
+            }
+            p = end;
+        } else if (*p == '{') {
+            char *start = p + 1;
+            if (isalpha(*start) || *start == '_') {
+                char *end = strchr(start, '}');
+                if (end) {
+                    char name[128];
+                    int len = end - start;
+                    strncpy(name, start, len);
+                    name[len] = '\0';
+                    char *val = get_var_string(name);
+                    if (val) {
+                        size_t prefix_len = p - result;
+                        size_t suffix_len = strlen(end + 1);
+                        size_t val_len = strlen(val);
+                        size_t total = prefix_len + val_len + suffix_len;
+                        if (new_cap < total + 1) {
+                            new_cap = total + 256;
+                            new_result = realloc(new_result, new_cap);
+                        }
+                        memcpy(new_result, result, prefix_len);
+                        memcpy(new_result + prefix_len, val, val_len);
+                        memcpy(new_result + prefix_len + val_len, end + 1, suffix_len + 1);
+                        free(result);
+                        result = new_result;
+                        p = result + prefix_len + val_len;
+                        free(val);
+                        continue;
+                    }
+                    p = end + 1;
+                    continue;
+                }
+            }
+        }
+        p++;
+    }
+    return result;
+}
+
 static void exec_flag_spec(FlagSpec *spec) {
     TokenStream saved_ts = ts;
     ts.tokens = spec->body_tokens;
@@ -1279,28 +1365,13 @@ void exec_block(NodeList *block) {
                 break;
             case NODE_CMD_STMT: {
                 char *cmd = stmt->data.cmd_stmt.cmd;
-                if (strstr(cmd, ".infernal")) {
-                    char path[512];
-                    sscanf(cmd, "%s", path);
-                    FILE *fp = fopen(path, "r");
-                    if (!fp) error(stmt->line, "No se pudo abrir script: %s", path);
-                    TokenStream old_ts = ts;
-                    ts_init();
-                    tokenize_file(fp);
-                    fclose(fp);
-                    Scope *old_global = global_scope;
-                    global_scope = scope_new(super_global_scope);
-                    Scope *old_current = current_scope;
-                    current_scope = global_scope;
-                    NodeList prog = parse_block(NULL);
-                    exec_block(&prog);
-                    current_scope = old_current;
-                    global_scope = old_global;
-                    ts = old_ts;
-                } else {
-                    int ret = system(cmd);
-                    if (ret != 0) error(stmt->line, "Comando falló: %s", cmd);
+                char *expanded = expand_command(cmd);
+                int ret = system(expanded);
+                if (ret != 0) {
+                    fprintf(stderr, "falló: %s\n", cmd);
+                    exit(1);
                 }
+                free(expanded);
                 break;
             }
             case NODE_ASSIGN: {
@@ -1875,7 +1946,6 @@ Value eval_expr(ASTNode *expr) {
                 return val_make_null();
             }
 
-            // Llamada a función definida por el usuario
             Scope *new_scope = scope_new(current_scope);
             Scope *prev_scope = current_scope;
             current_scope = new_scope;
