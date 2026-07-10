@@ -1,7 +1,7 @@
 /*
  * infernal.c
- * Infernal: lenguaje de programación inspirado en Bash + Lua
- * GPL v3 License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
+ * Infernal: lenguaje de programación inspirado en Bash + Lua + Python
+ * Coryright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak
  *
  * Correcciones:
  *   - $var y {var} en asignaciones obtienen el valor actual (copia por valor).
