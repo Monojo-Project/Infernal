@@ -1,0 +1,11 @@
+Docs faltantes:
+
+Portales
+Fire
+Listas
+Operadores
+Funciones
+if
+while
+for
+Compilación
