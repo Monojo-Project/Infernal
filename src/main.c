@@ -34,6 +34,13 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (strcmp(argv[1], "--edition") == 0) {
+        const char *edition = get_metadata("EDITION");
+        if (edition) printf("%s", edition);
+        else printf("Infernal edición desconocida\n");
+        return 0;
+    }
+
     if (strcmp(argv[1], "--help") == 0) {
         const char *help = get_metadata("HELP");
         if (help) printf("%s\n", help);

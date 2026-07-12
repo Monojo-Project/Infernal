@@ -43,7 +43,7 @@ EMBED_TABLE_SRC := $(BUILDDIR)/embedded_table.c
 EMBED_TABLE_OBJ := $(EMBED_TABLE_SRC:.c=.o)
 
 # Metadatos embebidos
-META_FILES    := VERSION HELP WELCOME
+META_FILES    := VERSION HELP WELCOME EDITION
 META_SRCS     := $(patsubst %, $(BUILDDIR)/metadata_%.c, $(META_FILES))
 META_OBJS     := $(META_SRCS:.c=.o)
 META_HUB_SRC  := $(BUILDDIR)/metadata.c
@@ -184,6 +184,8 @@ $(META_HUB_SRC): $(patsubst %, $(META_DIR)/%, $(META_FILES))
 	@echo '    if (strcmp(type, "VERSION") == 0) return (const char*)metadata_VERSION;' >> $@
 	@echo '    if (strcmp(type, "HELP") == 0) return (const char*)metadata_HELP;' >> $@
 	@echo '    if (strcmp(type, "WELCOME") == 0) return (const char*)metadata_WELCOME;' >> $@
+	@echo '    if (strcmp(type, "EDITION") == 0) return (const char*)metadata_EDITION;' >> $@
+
 	@echo '    return NULL;' >> $@
 	@echo '}' >> $@
 
