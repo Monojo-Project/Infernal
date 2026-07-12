@@ -1,0 +1,12 @@
+print("hola")
+@start
+continuar = input("¿Continuar? (S/n)")
+
+if continuar == "n" or continuar == "N" then
+    print("no")
+elseif continuar == "s" or continuar == "S" or continuar == "vacio" then
+    print("si")
+else
+    print("Tienes que poner S (si) o N (no)")
+    repeat @start
+fi
