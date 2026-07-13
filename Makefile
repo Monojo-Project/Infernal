@@ -86,10 +86,11 @@ $(FIRE_GEN_DIR)/%.fire.c: $(FIRE_SRC_DIR)/%.fire
 	@mkdir -p $(dir $@)
 	@echo " [OD] $< -> $@"
 	@name=$$(basename $@ .fire.c); \
-	echo "unsigned char config_infernal_fire_$${name}[] = {" > $@; \
+	sanename=$$(echo $${name} | tr '-' '_'); \
+	echo "unsigned char config_infernal_fire_$${sanename}[] = {" > $@; \
 	od -A n -t x1 -v < "$<" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]\{1,\}/, 0x/g' -e 's/^, //' -e 's/^/0x/' -e 's/$$/,/' >> $@; \
 	echo "};" >> $@; \
-	echo "unsigned int config_infernal_fire_$${name}_len = sizeof(config_infernal_fire_$${name});" >> $@
+	echo "unsigned int config_infernal_fire_$${sanename}_len = sizeof(config_infernal_fire_$${sanename});" >> $@
 
 $(FIRE_GEN_DIR)/%.o: $(FIRE_GEN_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -105,10 +106,11 @@ $(BIN_GEN_DIR)/%.c: $(BIN_SRC_DIR)/%
 	@mkdir -p $(dir $@)
 	@echo " [BIN] $< -> $@"
 	@name=$$(basename $<); \
-	echo "unsigned char config_infernal_bins_$${name}[] = {" > $@; \
+	sanename=$$(echo $${name} | tr '-' '_'); \
+	echo "unsigned char config_infernal_bins_$${sanename}[] = {" > $@; \
 	od -A n -t x1 -v < "$<" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]\{1,\}/, 0x/g' -e 's/^, //' -e 's/^/0x/' -e 's/$$/,/' >> $@; \
 	echo "};" >> $@; \
-	echo "unsigned int config_infernal_bins_$${name}_len = sizeof(config_infernal_bins_$${name});" >> $@
+	echo "unsigned int config_infernal_bins_$${sanename}_len = sizeof(config_infernal_bins_$${sanename});" >> $@
 
 $(BIN_GEN_DIR)/%.o: $(BIN_GEN_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -127,23 +129,27 @@ $(EMBED_TABLE_SRC): $(FIRE_FILES) $(BIN_FILES)
 	@echo '#include "stdlib/embedded.h"' >> $@
 	@for f in $(FIRE_FILES); do \
 		name=$$(basename $$f .fire); \
-		echo "extern unsigned char config_infernal_fire_$${name}[];" >> $@; \
-		echo "extern unsigned int config_infernal_fire_$${name}_len;" >> $@; \
+		sanename=$$(echo $${name} | tr '-' '_'); \
+		echo "extern unsigned char config_infernal_fire_$${sanename}[];" >> $@; \
+		echo "extern unsigned int config_infernal_fire_$${sanename}_len;" >> $@; \
 	done
 	@for f in $(BIN_FILES); do \
 		name=$$(basename $$f); \
-		echo "extern unsigned char config_infernal_bins_$${name}[];" >> $@; \
-		echo "extern unsigned int config_infernal_bins_$${name}_len;" >> $@; \
+		sanename=$$(echo $${name} | tr '-' '_'); \
+		echo "extern unsigned char config_infernal_bins_$${sanename}[];" >> $@; \
+		echo "extern unsigned int config_infernal_bins_$${sanename}_len;" >> $@; \
 	done
 	@echo '' >> $@
 	@echo 'EmbeddedModule embedded_modules[] = {' >> $@
 	@for f in $(FIRE_FILES); do \
 		name=$$(basename $$f .fire); \
-		echo "  {\"$$name\", config_infernal_fire_$${name}, &config_infernal_fire_$${name}_len}," >> $@; \
+		sanename=$$(echo $${name} | tr '-' '_'); \
+		echo "  {\"$$name\", config_infernal_fire_$${sanename}, &config_infernal_fire_$${sanename}_len}," >> $@; \
 	done
 	@for f in $(BIN_FILES); do \
 		name=$$(basename $$f); \
-		echo "  {\"$$name\", config_infernal_bins_$${name}, &config_infernal_bins_$${name}_len}," >> $@; \
+		sanename=$$(echo $${name} | tr '-' '_'); \
+		echo "  {\"$$name\", config_infernal_bins_$${sanename}, &config_infernal_bins_$${sanename}_len}," >> $@; \
 	done
 	@echo '  {NULL, NULL, NULL}' >> $@
 	@echo '};' >> $@
@@ -159,10 +165,11 @@ $(BUILDDIR)/metadata_%.c: $(META_DIR)/%
 	@mkdir -p $(dir $@)
 	@echo " [META] $<"
 	@name=$*; \
-	echo "unsigned char metadata_$${name}[] = {" > $@; \
+	sanename=$$(echo $${name} | tr '-' '_'); \
+	echo "unsigned char metadata_$${sanename}[] = {" > $@; \
 	od -A n -t x1 -v < "$<" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]\{1,\}/, 0x/g' -e 's/^, //' -e 's/^/0x/' -e 's/$$/,/' >> $@; \
 	echo "0x00 };" >> $@; \
-	echo "unsigned int metadata_$${name}_len = sizeof(metadata_$${name}) - 1;" >> $@
+	echo "unsigned int metadata_$${sanename}_len = sizeof(metadata_$${sanename}) - 1;" >> $@
 
 $(BUILDDIR)/metadata_%.o: $(BUILDDIR)/metadata_%.c
 	@echo " [CC] $< (metadata)"
@@ -176,8 +183,9 @@ $(META_HUB_SRC): $(patsubst %, $(META_DIR)/%, $(META_FILES))
 	@echo '#include <stddef.h>' >> $@
 	@for f in $(META_FILES); do \
 		name=$$f; \
-		echo "extern unsigned char metadata_$${name}[];" >> $@; \
-		echo "extern unsigned int metadata_$${name}_len;" >> $@; \
+		sanename=$$(echo $${name} | tr '-' '_'); \
+		echo "extern unsigned char metadata_$${sanename}[];" >> $@; \
+		echo "extern unsigned int metadata_$${sanename}_len;" >> $@; \
 	done
 	@echo '' >> $@
 	@echo 'const char* get_metadata(const char *type) {' >> $@
@@ -185,7 +193,6 @@ $(META_HUB_SRC): $(patsubst %, $(META_DIR)/%, $(META_FILES))
 	@echo '    if (strcmp(type, "HELP") == 0) return (const char*)metadata_HELP;' >> $@
 	@echo '    if (strcmp(type, "WELCOME") == 0) return (const char*)metadata_WELCOME;' >> $@
 	@echo '    if (strcmp(type, "EDITION") == 0) return (const char*)metadata_EDITION;' >> $@
-
 	@echo '    return NULL;' >> $@
 	@echo '}' >> $@
 

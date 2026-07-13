@@ -1,8 +1,3 @@
-/*
- * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
- * Código fuente de Infernal: lexer/lexer.c
-*/
-
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -10,7 +5,7 @@
 #include "lexer.h"
 #include "keywords.h"
 #include "runtime/globals.h"
-#include "runtime/error.h"   // <-- añadido para error()
+#include "runtime/error.h"
 
 TokenStream ts;
 
@@ -43,7 +38,6 @@ void ts_skip_newlines() {
     while (ts_peek().type == TOK_NEWLINE) ts_advance();
 }
 
-/* Extrae la parte derecha de una asignación desde la línea original */
 char *extract_command_string(int line) {
     if (line < 1 || line > source_line_count) return strdup("");
     char *src = source_lines[line - 1];
@@ -59,7 +53,6 @@ char *extract_command_string(int line) {
     return strdup(start);
 }
 
-/* Tokeniza directamente desde un buffer en memoria (para módulos embebidos) */
 void tokenize_buffer(const char *data, size_t len) {
     FILE *fp = fmemopen((void*)data, len, "r");
     if (!fp) return;
@@ -67,7 +60,6 @@ void tokenize_buffer(const char *data, size_t len) {
     fclose(fp);
 }
 
-/* Tokeniza desde un archivo normal */
 void tokenize_file(FILE *fp) {
     char *line = NULL;
     size_t len = 0;
@@ -89,19 +81,17 @@ void tokenize_file(FILE *fp) {
         source_line_count++;
 
         char *p = line;
-        // Si estamos dentro de un comentario de bloque, buscar el cierre
         if (in_block_comment) {
             char *close = strstr(p, "###");
             if (close) {
                 in_block_comment = false;
                 p = close + 3;
             } else {
-                continue;   // toda la línea es parte del comentario
+                continue;
             }
         }
 
         while (*p) {
-            // Detectar inicio o fin de comentario de bloque
             if (*p == '#' && *(p+1) == '#' && *(p+2) == '#') {
                 if (!in_block_comment) {
                     char *close = strstr(p + 3, "###");
@@ -119,11 +109,9 @@ void tokenize_file(FILE *fp) {
                 }
             }
 
-            // Comentario de línea
             if (*p == '#') break;
             if (isspace(*p)) { p++; continue; }
 
-            // Operadores compuestos
             if (*p == '&' && *(p+1) == '&') { ts_add((Token){TOK_AND, "&&", lineno}); p+=2; continue; }
             if (*p == '|' && *(p+1) == '|') { ts_add((Token){TOK_OR, "||", lineno}); p+=2; continue; }
             if (*p == '=' && *(p+1) == '=') { ts_add((Token){TOK_EEQ, "==", lineno}); p+=2; continue; }
@@ -172,32 +160,28 @@ void tokenize_file(FILE *fp) {
                 continue;
             }
 
-            // NUEVO: token para @
             if (*p == '@') {
                 ts_add((Token){TOK_AT, "@", lineno});
                 p++;
                 continue;
             }
 
-            // ---- MODIFICACIÓN: cadena sin cerrar genera error ----
             if (*p == '\'' || *p == '"') {
                 char quote = *p++;
                 char buf[4096]; int bi = 0;
-                while (*p && *p != quote && *p != '\n') {   // añadimos '\n' para no leer más allá de la línea
+                while (*p && *p != quote && *p != '\n') {
                     if (*p == '\\' && *(p+1)) p++;
                     buf[bi++] = *p++;
                 }
                 buf[bi] = '\0';
                 if (*p == quote) {
-                    p++;   // consumir la comilla de cierre
+                    p++;
                 } else {
-                    // Cadena de texto sin cerrar
                     error(lineno, "Cadena de texto sin cerrar: %c%s", quote, buf);
                 }
                 ts_add((Token){TOK_STRING_LITERAL, strdup(buf), lineno});
                 continue;
             }
-            // -------------------------------------------------------
 
             if (isdigit(*p) || (*p == '.' && isdigit(*(p+1)))) {
                 char *start = p;

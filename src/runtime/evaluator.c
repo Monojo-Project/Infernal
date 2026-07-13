@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/evaluator.c
-*/
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -222,7 +222,7 @@ Value eval_expr(ASTNode *expr) {
                     return val_bool(expr->data.binop.op == TOK_EEQ ? equal : !equal);
                 }
 
-                /* NUEVO: comparaciones <, >, <=, >= */
+                /* Comparaciones <, >, <=, >= */
                 if (expr->data.binop.op == TOK_LT_OP || expr->data.binop.op == TOK_GT_OP ||
                     expr->data.binop.op == TOK_LE    || expr->data.binop.op == TOK_GE) {
                     double lv = (left.type == VAL_INT) ? left.data.ival :
@@ -348,8 +348,8 @@ void exec_block_from(NodeList *block, int start_index) {
                 char *expanded = expand_command(stmt->data.cmd_stmt.cmd);
                 int ret = execute_embedded(expanded);
                 if (ret == -1) {
-                    fprintf(stderr, "Comando no encontrado (embebido): %s\n", stmt->data.cmd_stmt.cmd);
-                    exit(1);
+                    free(expanded);
+                    error(stmt->line, "Comando embebido no encontrado: %s", stmt->data.cmd_stmt.cmd);
                 }
                 free(expanded);
                 break;
@@ -358,8 +358,8 @@ void exec_block_from(NodeList *block, int start_index) {
                 char *expanded = expand_command(stmt->data.shell_cmd.cmd);
                 int ret = system(expanded);
                 if (ret != 0) {
-                    fprintf(stderr, "falló: %s (expandido: %s)\n", stmt->data.shell_cmd.cmd, expanded);
-                    exit(1);
+                    free(expanded);
+                    error(stmt->line, "falló: %s", stmt->data.shell_cmd.cmd);
                 }
                 free(expanded);
                 break;
@@ -597,8 +597,7 @@ void exec_block_from(NodeList *block, int start_index) {
                             if (portal_find_in_scope(target_scope, name)) {
                                 error(stmt->line, "Portal '%s' ya existe en este ámbito", name);
                             }
-                            // Buscar la línea de la siguiente instrucción no-portal
-                            int next_line = stmt->line + 1; // fallback
+                            int next_line = stmt->line + 1;
                             for (int j = i + 1; j < block->count; j++) {
                                 if (block->stmts[j]->kind != NODE_PORTAL) {
                                     next_line = block->stmts[j]->line;
@@ -650,122 +649,130 @@ void exec_block_from(NodeList *block, int start_index) {
                             for (int s = 0; s < stmt->data.flags.spec_count; s++)
                                 if (stmt->data.flags.specs[s].catch_all) { catch_all = &stmt->data.flags.specs[s]; break; }
 
-                                if (mode == 1) {
-                                    int arg_idx = 1;
+                                int total_matched = 0;
+
+                            if (mode == 1) {
+                                int arg_idx = 2;
+                                for (int s = 0; s < stmt->data.flags.spec_count; s++) {
+                                    FlagSpec *spec = &stmt->data.flags.specs[s];
+                                    if (spec->catch_all) continue;
+                                    if (arg_idx >= script_argc) break;
+                                    if (spec->vtype && spec->var_name) {
+                                        char *val_str = script_argv[arg_idx];
+                                        char cleaned[512]; int c = 0;
+                                        if (val_str[0] == '"' || val_str[0] == '\'') {
+                                            char quote = val_str[0];
+                                            for (int j=1; val_str[j] && val_str[j] != quote; j++) cleaned[c++] = val_str[j];
+                                            cleaned[c] = '\0';
+                                        } else {
+                                            strncpy(cleaned, val_str, sizeof(cleaned));
+                                            cleaned[sizeof(cleaned)-1] = '\0';
+                                        }
+                                        if (spec->vtype == TOK_FLOAT) {
+                                            char *coma = strchr(cleaned, ',');
+                                            if (coma) *coma = '.';
+                                        }
+                                        Value v;
+                                        switch (spec->vtype) {
+                                            case TOK_INT: v = val_int(atoi(cleaned)); break;
+                                            case TOK_FLOAT: v = val_float(atof(cleaned)); break;
+                                            case TOK_BOOL: v = val_bool(strcmp(cleaned,"0")!=0 && strlen(cleaned)>0); break;
+                                            case TOK_STRING: v = val_string(cleaned); break;
+                                            default: v = val_string(cleaned);
+                                        }
+                                        scope_define(current_scope, spec->var_name, spec->vtype, v);
+                                    }
+                                    exec_flag_spec(spec);
+                                    handled[arg_idx] = true;
+                                    total_matched++;
+                                    arg_idx++;
+                                }
+                                if (catch_all) {
+                                    for (int a = 2; a < script_argc; a++)
+                                        if (!handled[a]) {
+                                            scope_define(current_scope, "_", 0, val_string(script_argv[a]));
+                                            exec_flag_spec(catch_all);
+                                            total_matched++;
+                                        }
+                                }
+                            } else {
+                                for (int a = 2; a < script_argc; a++) {
+                                    char *arg = script_argv[a];
+                                    char *arg_dup = strdup(arg);
+                                    char *eq_pos = strchr(arg_dup, '=');
+                                    if (eq_pos) *eq_pos = '\0';
+                                    bool matched = false;
                                     for (int s = 0; s < stmt->data.flags.spec_count; s++) {
                                         FlagSpec *spec = &stmt->data.flags.specs[s];
                                         if (spec->catch_all) continue;
-                                        if (arg_idx >= script_argc) break;
-                                        if (spec->vtype && spec->var_name) {
-                                            char *val_str = script_argv[arg_idx];
-                                            char cleaned[512]; int c = 0;
-                                            if (val_str[0] == '"' || val_str[0] == '\'') {
-                                                char quote = val_str[0];
-                                                for (int j=1; val_str[j] && val_str[j] != quote; j++) cleaned[c++] = val_str[j];
-                                                cleaned[c] = '\0';
-                                            } else {
-                                                strncpy(cleaned, val_str, sizeof(cleaned));
-                                                cleaned[sizeof(cleaned)-1] = '\0';
-                                            }
-                                            if (spec->vtype == TOK_FLOAT) {
-                                                char *coma = strchr(cleaned, ',');
-                                                if (coma) *coma = '.';
-                                            }
-                                            Value v;
-                                            switch (spec->vtype) {
-                                                case TOK_INT: v = val_int(atoi(cleaned)); break;
-                                                case TOK_FLOAT: v = val_float(atof(cleaned)); break;
-                                                case TOK_BOOL: v = val_bool(strcmp(cleaned,"0")!=0 && strlen(cleaned)>0); break;
-                                                case TOK_STRING: v = val_string(cleaned); break;
-                                                default: v = val_string(cleaned);
-                                            }
-                                            scope_define(current_scope, spec->var_name, spec->vtype, v);
-                                        }
-                                        exec_flag_spec(spec);
-                                        handled[arg_idx] = true;
-                                        arg_idx++;
-                                    }
-                                    if (catch_all) {
-                                        for (int a = 1; a < script_argc; a++)
-                                            if (!handled[a]) {
-                                                scope_define(current_scope, "_", 0, val_string(script_argv[a]));
-                                                exec_flag_spec(catch_all);
-                                            }
-                                    }
-                                } else {
-                                    for (int a = 1; a < script_argc; a++) {
-                                        char *arg = script_argv[a];
-                                        char *arg_dup = strdup(arg);
-                                        char *eq_pos = strchr(arg_dup, '=');
-                                        if (eq_pos) *eq_pos = '\0';
-                                        bool matched = false;
-                                        for (int s = 0; s < stmt->data.flags.spec_count; s++) {
-                                            FlagSpec *spec = &stmt->data.flags.specs[s];
-                                            if (spec->catch_all) continue;
-                                            for (int n = 0; n < spec->name_count; n++) {
-                                                if (strcmp(arg_dup, spec->names[n]) == 0) {
-                                                    if (spec->vtype && spec->var_name) {
-                                                        char *val_str = eq_pos ? eq_pos + 1 : (a+1 < script_argc ? script_argv[++a] : "");
-                                                        char cleaned[512]; int c = 0;
-                                                        if (val_str[0] == '"' || val_str[0] == '\'') {
-                                                            char quote = val_str[0];
-                                                            for (int j=1; val_str[j] && val_str[j] != quote; j++) cleaned[c++] = val_str[j];
-                                                            cleaned[c] = '\0';
-                                                        } else {
-                                                            strncpy(cleaned, val_str, sizeof(cleaned));
-                                                            cleaned[sizeof(cleaned)-1] = '\0';
-                                                        }
-                                                        if (spec->vtype == TOK_FLOAT) {
-                                                            char *coma = strchr(cleaned, ',');
-                                                            if (coma) *coma = '.';
-                                                        }
-                                                        Value v;
-                                                        switch (spec->vtype) {
-                                                            case TOK_INT: v = val_int(atoi(cleaned)); break;
-                                                            case TOK_FLOAT: v = val_float(atof(cleaned)); break;
-                                                            case TOK_BOOL: v = val_bool(strcmp(cleaned,"0")!=0 && strlen(cleaned)>0); break;
-                                                            case TOK_STRING: v = val_string(cleaned); break;
-                                                            default: v = val_string(cleaned);
-                                                        }
-                                                        scope_define(current_scope, spec->var_name, spec->vtype, v);
+                                        for (int n = 0; n < spec->name_count; n++) {
+                                            if (strcmp(arg_dup, spec->names[n]) == 0) {
+                                                if (spec->vtype && spec->var_name) {
+                                                    char *val_str = eq_pos ? eq_pos + 1 : (a+1 < script_argc ? script_argv[++a] : "");
+                                                    char cleaned[512]; int c = 0;
+                                                    if (val_str[0] == '"' || val_str[0] == '\'') {
+                                                        char quote = val_str[0];
+                                                        for (int j=1; val_str[j] && val_str[j] != quote; j++) cleaned[c++] = val_str[j];
+                                                        cleaned[c] = '\0';
+                                                    } else {
+                                                        strncpy(cleaned, val_str, sizeof(cleaned));
+                                                        cleaned[sizeof(cleaned)-1] = '\0';
                                                     }
-                                                    exec_flag_spec(spec);
-                                                    handled[a] = true;
-                                                    matched = true;
-                                                    break;
+                                                    if (spec->vtype == TOK_FLOAT) {
+                                                        char *coma = strchr(cleaned, ',');
+                                                        if (coma) *coma = '.';
+                                                    }
+                                                    Value v;
+                                                    switch (spec->vtype) {
+                                                        case TOK_INT: v = val_int(atoi(cleaned)); break;
+                                                        case TOK_FLOAT: v = val_float(atof(cleaned)); break;
+                                                        case TOK_BOOL: v = val_bool(strcmp(cleaned,"0")!=0 && strlen(cleaned)>0); break;
+                                                        case TOK_STRING: v = val_string(cleaned); break;
+                                                        default: v = val_string(cleaned);
+                                                    }
+                                                    scope_define(current_scope, spec->var_name, spec->vtype, v);
                                                 }
+                                                exec_flag_spec(spec);
+                                                handled[a] = true;
+                                                matched = true;
+                                                total_matched++;
+                                                break;
                                             }
-                                            if (matched) break;
                                         }
-                                        if (!matched && arg_dup[0] == '-' && arg_dup[1] != '-' && strlen(arg_dup) > 2) {
-                                            for (int c = 1; arg_dup[c]; c++) {
-                                                char sn[3] = {'-', arg_dup[c], '\0'};
-                                                bool found = false;
-                                                for (int s = 0; s < stmt->data.flags.spec_count; s++) {
-                                                    FlagSpec *spec = &stmt->data.flags.specs[s];
-                                                    if (spec->catch_all) continue;
-                                                    for (int n = 0; n < spec->name_count; n++)
-                                                        if (strcmp(sn, spec->names[n]) == 0) { exec_flag_spec(spec); found = true; break; }
-                                                        if (found) break;
-                                                }
-                                                if (!found && catch_all) {
-                                                    scope_define(current_scope, "_", 0, val_string(sn));
-                                                    exec_flag_spec(catch_all);
-                                                }
-                                            }
-                                            handled[a] = true;
-                                        } else if (!matched && catch_all) {
-                                            scope_define(current_scope, "_", 0, val_string(arg));
-                                            exec_flag_spec(catch_all);
-                                            handled[a] = true;
-                                        }
-                                        free(arg_dup);
+                                        if (matched) break;
                                     }
+                                    if (!matched && arg_dup[0] == '-' && arg_dup[1] != '-' && strlen(arg_dup) > 2) {
+                                        for (int c = 1; arg_dup[c]; c++) {
+                                            char sn[3] = {'-', arg_dup[c], '\0'};
+                                            bool found = false;
+                                            for (int s = 0; s < stmt->data.flags.spec_count; s++) {
+                                                FlagSpec *spec = &stmt->data.flags.specs[s];
+                                                if (spec->catch_all) continue;
+                                                for (int n = 0; n < spec->name_count; n++)
+                                                    if (strcmp(sn, spec->names[n]) == 0) { exec_flag_spec(spec); found = true; total_matched++; break; }
+                                                    if (found) break;
+                                            }
+                                            if (!found && catch_all) {
+                                                scope_define(current_scope, "_", 0, val_string(sn));
+                                                exec_flag_spec(catch_all);
+                                                total_matched++;
+                                            }
+                                        }
+                                        handled[a] = true;
+                                    } else if (!matched && catch_all) {
+                                        scope_define(current_scope, "_", 0, val_string(arg));
+                                        exec_flag_spec(catch_all);
+                                        handled[a] = true;
+                                        total_matched++;
+                                    }
+                                    free(arg_dup);
                                 }
-                                free(handled);
-                                break;
+                            }
+                            if (total_matched == 0 && catch_all != NULL) exec_flag_spec(catch_all);
+                            free(handled);
+                            break;
                         }
-                                                            default: error(stmt->line, "Sentencia no implementada");
+                                                        default: error(stmt->line, "Sentencia no implementada");
         }
 
         if (control_flow != CF_NONE) break;

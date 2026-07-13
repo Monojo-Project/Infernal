@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/globals.h
-*/
+ */
 #ifndef RUNTIME_GLOBALS_H
 #define RUNTIME_GLOBALS_H
 
@@ -39,7 +39,7 @@ extern int max_loop_iterations;
 // Error and control flow
 extern jmp_buf exception_env;
 extern int exception_raised;
-extern char exception_msg[256];
+extern char exception_msg[512];
 extern char **source_lines;
 extern int source_line_count;
 extern int control_flow;
@@ -51,5 +51,11 @@ extern char **script_argv;
 
 // Repeat line target
 extern int repeat_line_target;
+
+// Directorio del script (para here())
+extern char *script_dir;
+
+// Archivo fuente actual (para mensajes de error)
+extern char *current_source_file;
 
 #endif
