@@ -48,8 +48,13 @@ ASTNode *parse_primary() {
         return n;
     }
     if (t.type == TOK_IDENT) {
-        // Si el siguiente token es '(', forzar siempre una llamada a función
-        if (ts.pos + 1 < ts.count && ts.tokens[ts.pos + 1].type == TOK_LPAREN) {
+        // Comprobar si es una función conocida
+        FuncObject *fobj = func_lookup(t.lexeme);
+        if (fobj) {
+            // Es una función: debe ir seguida de '('
+            if (ts.pos + 1 >= ts.count || ts.tokens[ts.pos + 1].type != TOK_LPAREN) {
+                error(t.line, "La función '%s' requiere paréntesis para ser invocada.", t.lexeme);
+            }
             ts_advance(); // consumir el identificador
             ASTNode *n = node_create(NODE_CALL, t.line);
             n->data.call.name = strdup(t.lexeme);
@@ -68,18 +73,8 @@ ASTNode *parse_primary() {
             return n;
         }
 
-        // Sin paréntesis: variable o función sin argumentos
+        // No es función → variable
         ts_advance();
-        FuncObject *fobj = func_lookup(t.lexeme);
-        if (fobj) {
-            // Es una función conocida (incluso sin paréntesis, como 'print')
-            ASTNode *n = node_create(NODE_CALL, t.line);
-            n->data.call.name = strdup(t.lexeme);
-            n->data.call.argc = 0;
-            n->data.call.args = NULL;
-            return n;
-        }
-        // Variable (puede contener puntos, p.ej. "modulo.funcion" pero sin paréntesis)
         ASTNode *n = node_create(NODE_VAR, t.line);
         n->data.var.name = strdup(t.lexeme);
         while (ts_match(TOK_LBRACKET)) {
