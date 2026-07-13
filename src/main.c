@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: main.c
-*/
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     script_argc = argc;
     script_argv = argv;
 
-    // Directorio del script para temporales
+    // Directorio del script para temporales y here()
     char *script_path = realpath(argv[1], NULL);
     if (script_path) {
         char *dir = strdup(script_path);
@@ -59,18 +59,26 @@ int main(int argc, char **argv) {
         if (last_slash) {
             *last_slash = '\0';
             set_embedded_tmp_dir(dir);
+            script_dir = strdup(dir);   // <-- guardar ruta del script
         } else {
             char cwd[PATH_MAX];
-            if (getcwd(cwd, sizeof(cwd)) != NULL)
+            if (getcwd(cwd, sizeof(cwd)) != NULL) {
                 set_embedded_tmp_dir(cwd);
+                script_dir = strdup(cwd);
+            }
         }
         free(dir);
         free(script_path);
     } else {
         char cwd[PATH_MAX];
-        if (getcwd(cwd, sizeof(cwd)) != NULL)
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
             set_embedded_tmp_dir(cwd);
+            script_dir = strdup(cwd);
+        }
     }
+
+    // Guardar el nombre del archivo principal para los mensajes de error
+    current_source_file = argv[1];
 
     super_global_scope = scope_new(NULL);
     extern char **environ;
@@ -96,6 +104,7 @@ int main(int argc, char **argv) {
     FILE *fp = fopen(argv[1], "r");
     if (!fp) {
         perror("Error al abrir script");
+        free(script_dir);
         return 1;
     }
 
@@ -129,10 +138,12 @@ int main(int argc, char **argv) {
         } while (control_flow == CF_REPEAT_LINE);
 
         cleanup_embedded_temp_dir();
+        free(script_dir);
         return 0;
     } else {
-        fprintf(stderr, "Error: %s\n", exception_msg);
+        fprintf(stderr, "%s\n", exception_msg);
         cleanup_embedded_temp_dir();
+        free(script_dir);
         return 1;
     }
 }

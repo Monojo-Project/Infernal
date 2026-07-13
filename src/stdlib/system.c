@@ -4,6 +4,8 @@
 */
 
 #include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
 #include "system.h"
 #include "core/value.h"
 #include "runtime/globals.h"
@@ -31,8 +33,27 @@ static Value builtin_getlooplimit(int argc, Value *args) {
     return val_int(max_loop_iterations);
 }
 
+static Value builtin_here(int argc, Value *args) {
+    (void)argc;
+    (void)args;
+    return val_string(script_dir ? script_dir : ".");
+}
+
+// NUEVO: convierte un string a minúsculas
+static Value builtin_lower(int argc, Value *args) {
+    if (argc != 1) error(0, "lower() espera exactamente 1 argumento que es una variable de tipo string entre los paréntesis, o si quieres un string entre comillas. Tambien puedes poner x = lower() y se para a minúsculas.");
+    if (args[0].type != VAL_STRING) error(0, "lower() espera un string.");
+    char *s = strdup(args[0].data.sval);
+    for (char *p = s; *p; p++) *p = tolower((unsigned char)*p);
+    Value res = val_string(s);
+    free(s);
+    return res;
+}
+
 void register_system_builtins(void) {
     func_register_builtin("exit", builtin_exit);
     func_register_builtin("setlooplimit", builtin_setlooplimit);
     func_register_builtin("getlooplimit", builtin_getlooplimit);
+    func_register_builtin("here", builtin_here);
+    func_register_builtin("lower", builtin_lower);
 }

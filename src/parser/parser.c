@@ -1,8 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: parser/parser.c
-*/
-
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,11 +18,8 @@
 
 static void validate_var_name(const char *name, int line) {
     const char invalid[] = "@[](){}";
-    for (const char *p = name; *p; p++) {
-        if (strchr(invalid, *p)) {
-            error(line, "Carácter inválido '%c' en nombre de variable", *p);
-        }
-    }
+    for (const char *p = name; *p; p++)
+        if (strchr(invalid, *p)) error(line, "Carácter inválido '%c' en nombre de variable", *p);
 }
 
 ASTNode *parse_if_statement() {
@@ -90,9 +86,118 @@ NodeList parse_block(const char *terminator) {
             if (ts_peek().type == TOK_BANG) ts_advance();
             stmt = node_create(NODE_CMD_STMT, t.line);
             stmt->data.cmd_stmt.cmd = strdup(cmd);
+            // Soporte para `or` después de comando embebido
+            while (ts_match(TOK_OR)) {
+                ASTNode *next_stmt = NULL;
+                Token next = ts_peek();
+                if (next.type == TOK_BANG) {
+                    ts_advance();
+                    char cmd2[4096] = {0};
+                    while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
+                        Token ct2 = ts_advance();
+                        if (cmd2[0] != '\0') strcat(cmd2, " ");
+                        strcat(cmd2, ct2.lexeme);
+                    }
+                    if (ts_peek().type == TOK_BANG) ts_advance();
+                    next_stmt = node_create(NODE_CMD_STMT, next.line);
+                    next_stmt->data.cmd_stmt.cmd = strdup(cmd2);
+                } else {
+                    char cmd2[4096] = {0};
+                    Token first2 = ts_advance();
+                    strcpy(cmd2, first2.lexeme);
+                    bool last_was_dash = (first2.type == TOK_MINUS);
+                    bool last_was_lbrace = (first2.type == TOK_LBRACE);
+                    while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF && ts_peek().type != TOK_OR) {
+                        Token ct2 = ts_advance();
+                        bool prepend_space = true;
+                        if (last_was_lbrace || ct2.type == TOK_RBRACE) prepend_space = false;
+                        else if (last_was_dash) prepend_space = false;
+                        if (prepend_space) strcat(cmd2, " ");
+                        if (ct2.type == TOK_STRING_LITERAL) {
+                            strcat(cmd2, "\""); strcat(cmd2, ct2.lexeme); strcat(cmd2, "\"");
+                        } else strcat(cmd2, ct2.lexeme);
+                        last_was_lbrace = (ct2.type == TOK_LBRACE);
+                        last_was_dash = (ct2.type == TOK_MINUS);
+                    }
+                    next_stmt = node_create(NODE_SHELL_CMD, next.line);
+                    next_stmt->data.shell_cmd.cmd = strdup(cmd2);
+                }
+                ASTNode *try_node = node_create(NODE_TRY, t.line);
+                try_node->data.try_stmt.try_block = (NodeList){NULL, 0, 0};
+                nodelist_add(&try_node->data.try_stmt.try_block, stmt);
+                try_node->data.try_stmt.catch_block = (NodeList){NULL, 0, 0};
+                nodelist_add(&try_node->data.try_stmt.catch_block, next_stmt);
+                stmt = try_node;
+            }
             nodelist_add(&block, stmt);
             ts_skip_newlines();
             continue;
+        }
+
+        // NUEVO: comandos que empiezan con una cadena literal (ej. "$RutaScript/infernal" args)
+        if (t.type == TOK_STRING_LITERAL) {
+            char cmd[4096] = {0};
+            Token first = ts_advance();  // consumir la primera cadena
+            strcat(cmd, "\"");
+            strcat(cmd, first.lexeme);
+            strcat(cmd, "\"");
+            while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
+                Token ct = ts_advance();
+                strcat(cmd, " ");
+                if (ct.type == TOK_STRING_LITERAL) {
+                    strcat(cmd, "\"");
+                    strcat(cmd, ct.lexeme);
+                    strcat(cmd, "\"");
+                } else {
+                    strcat(cmd, ct.lexeme);
+                }
+            }
+            stmt = node_create(NODE_SHELL_CMD, t.line);
+            stmt->data.shell_cmd.cmd = strdup(cmd);
+            // Soporte para `or` después de este comando
+            while (ts_match(TOK_OR)) {
+                ASTNode *next_stmt = NULL;
+                Token next = ts_peek();
+                if (next.type == TOK_BANG) {
+                    ts_advance();
+                    char cmd2[4096] = {0};
+                    while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
+                        Token ct2 = ts_advance();
+                        if (cmd2[0] != '\0') strcat(cmd2, " ");
+                        strcat(cmd2, ct2.lexeme);
+                    }
+                    if (ts_peek().type == TOK_BANG) ts_advance();
+                    next_stmt = node_create(NODE_CMD_STMT, next.line);
+                    next_stmt->data.cmd_stmt.cmd = strdup(cmd2);
+                } else {
+                    char cmd2[4096] = {0};
+                    Token first2 = ts_advance();
+                    strcpy(cmd2, first2.lexeme);
+                    bool last_was_dash = (first2.type == TOK_MINUS);
+                    bool last_was_lbrace = (first2.type == TOK_LBRACE);
+                    while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF && ts_peek().type != TOK_OR) {
+                        Token ct2 = ts_advance();
+                        bool prepend_space = true;
+                        if (last_was_lbrace || ct2.type == TOK_RBRACE) prepend_space = false;
+                        else if (last_was_dash) prepend_space = false;
+                        if (prepend_space) strcat(cmd2, " ");
+                        if (ct2.type == TOK_STRING_LITERAL) {
+                            strcat(cmd2, "\""); strcat(cmd2, ct2.lexeme); strcat(cmd2, "\"");
+                        } else strcat(cmd2, ct2.lexeme);
+                        last_was_lbrace = (ct2.type == TOK_LBRACE);
+                        last_was_dash = (ct2.type == TOK_MINUS);
+                    }
+                    next_stmt = node_create(NODE_SHELL_CMD, next.line);
+                    next_stmt->data.shell_cmd.cmd = strdup(cmd2);
+                }
+                ASTNode *try_node = node_create(NODE_TRY, t.line);
+                try_node->data.try_stmt.try_block = (NodeList){NULL, 0, 0};
+                nodelist_add(&try_node->data.try_stmt.try_block, stmt);
+                try_node->data.try_stmt.catch_block = (NodeList){NULL, 0, 0};
+                nodelist_add(&try_node->data.try_stmt.catch_block, next_stmt);
+                stmt = try_node;
+            }
+            goto stmt_done;
         }
 
         if (t.type == TOK_AT) {
@@ -406,21 +511,21 @@ NodeList parse_block(const char *terminator) {
                 /* NUEVO: Declaraciones con tipo explícito sin local/global (ej: int x = 5) */
         } else if (t.type == TOK_INT || t.type == TOK_FLOAT || t.type == TOK_BOOL ||
             t.type == TOK_STRING || t.type == TOK_LIST) {
-            int vtype = ts_advance().type;  // consume la palabra clave de tipo
-            if (ts_peek().type != TOK_IDENT) error(t.line, "Se esperaba nombre de variable");
-            char *vname = strdup(ts_advance().lexeme);
+            int vtype = ts_advance().type;
+        if (ts_peek().type != TOK_IDENT) error(t.line, "Se esperaba nombre de variable");
+        char *vname = strdup(ts_advance().lexeme);
             validate_var_name(vname, t.line);
 
-        ASTNode *lhs_index = NULL;
-        if (ts_match(TOK_LBRACKET)) {
-            lhs_index = parse_expression(0);
-            if (!ts_match(TOK_RBRACKET))
-                error(t.line, "Se esperaba ']' tras índice");
-        }
+            ASTNode *lhs_index = NULL;
+            if (ts_match(TOK_LBRACKET)) {
+                lhs_index = parse_expression(0);
+                if (!ts_match(TOK_RBRACKET))
+                    error(t.line, "Se esperaba ']' tras índice");
+            }
 
-        if (!ts_match(TOK_EQ)) error(t.line, "Se esperaba '='");
+            if (!ts_match(TOK_EQ)) error(t.line, "Se esperaba '='");
 
-        ASTNode *value = NULL;
+            ASTNode *value = NULL;
             bool is_cmd = false;
             char *cmd_str = NULL;
 
@@ -633,6 +738,49 @@ NodeList parse_block(const char *terminator) {
                     }
                     stmt = node_create(NODE_SHELL_CMD, t.line);
                     stmt->data.shell_cmd.cmd = strdup(cmd);
+                    // Soporte para `or` después de comando shell
+                    while (ts_match(TOK_OR)) {
+                        ASTNode *next_stmt = NULL;
+                        Token next = ts_peek();
+                        if (next.type == TOK_BANG) {
+                            ts_advance();
+                            char cmd2[4096] = {0};
+                            while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
+                                Token ct2 = ts_advance();
+                                if (cmd2[0] != '\0') strcat(cmd2, " ");
+                                strcat(cmd2, ct2.lexeme);
+                            }
+                            if (ts_peek().type == TOK_BANG) ts_advance();
+                            next_stmt = node_create(NODE_CMD_STMT, next.line);
+                            next_stmt->data.cmd_stmt.cmd = strdup(cmd2);
+                        } else {
+                            char cmd2[4096] = {0};
+                            Token first2 = ts_advance();
+                            strcpy(cmd2, first2.lexeme);
+                            bool last_was_dash = (first2.type == TOK_MINUS);
+                            bool last_was_lbrace = (first2.type == TOK_LBRACE);
+                            while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF && ts_peek().type != TOK_OR) {
+                                Token ct2 = ts_advance();
+                                bool prepend_space = true;
+                                if (last_was_lbrace || ct2.type == TOK_RBRACE) prepend_space = false;
+                                else if (last_was_dash) prepend_space = false;
+                                if (prepend_space) strcat(cmd2, " ");
+                                if (ct2.type == TOK_STRING_LITERAL) {
+                                    strcat(cmd2, "\""); strcat(cmd2, ct2.lexeme); strcat(cmd2, "\"");
+                                } else strcat(cmd2, ct2.lexeme);
+                                last_was_lbrace = (ct2.type == TOK_LBRACE);
+                                last_was_dash = (ct2.type == TOK_MINUS);
+                            }
+                            next_stmt = node_create(NODE_SHELL_CMD, next.line);
+                            next_stmt->data.shell_cmd.cmd = strdup(cmd2);
+                        }
+                        ASTNode *try_node = node_create(NODE_TRY, t.line);
+                        try_node->data.try_stmt.try_block = (NodeList){NULL, 0, 0};
+                        nodelist_add(&try_node->data.try_stmt.try_block, stmt);
+                        try_node->data.try_stmt.catch_block = (NodeList){NULL, 0, 0};
+                        nodelist_add(&try_node->data.try_stmt.catch_block, next_stmt);
+                        stmt = try_node;
+                    }
                     goto stmt_done;
                 }
             } else {

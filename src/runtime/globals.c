@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/globals.c
-*/
+ */
 #include <stdlib.h>
 #include <string.h>
 #include "globals.h"
@@ -12,11 +12,11 @@ Scope *current_scope = NULL;
 
 FuncEntry *func_table = NULL;
 char *current_import_prefix = NULL;
-int max_loop_iterations = 10000; // límite de seguridad que detiene los bucles (while, for) después de un número máximo de iteraciones para evitar que un bucle infinito bloquee el programa. Te recomiendo cambiarlo si vas a calcular PI.
+int max_loop_iterations = 10000;
 
 jmp_buf exception_env;
 int exception_raised = 0;
-char exception_msg[256];
+char exception_msg[512];
 char **source_lines = NULL;
 int source_line_count = 0;
 int control_flow = CF_NONE;
@@ -25,7 +25,11 @@ Value return_value;
 int script_argc;
 char **script_argv;
 
-int repeat_line_target = 0;   // <-- NUEVO
+int repeat_line_target = 0;
+
+char *script_dir = NULL;
+
+char *current_source_file = NULL;   // <-- nuevo
 
 void func_register(const char *name, ASTNode *def) {
     FuncObject *obj = malloc(sizeof(FuncObject));

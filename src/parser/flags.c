@@ -112,10 +112,10 @@ ASTNode *parse_flags() {
                 if (t == TOK_INT || t == TOK_FLOAT || t == TOK_BOOL || t == TOK_STRING || t == TOK_LIST) {
                     spec.vtype = ts_advance().type;
                     if (!is_valid_flag_name(ts_peek().lexeme))
-                        error(ts_peek().line, "Se esperaba nombre de variable para el flag");
+                        error(ts_peek().line, "Se esperaba nombre de variable para el flags");
                     spec.var_name = strdup(ts_advance().lexeme);
                 } else {
-                    error(ts_peek().line, "Se esperaba tipo después de '=' en flag (int, float, bool, string, list)");
+                    error(ts_peek().line, "Los flags no tienen tipado automático, por lo que se esperaba tipo después de '=' en flags (int, float, bool, string, list)");
                 }
             }
 

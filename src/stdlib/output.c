@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: stdlib/output.c
-*/
+ */
 
 #include <stdio.h>
 #include "output.h"
@@ -39,6 +39,7 @@ static Value builtin_warn(int argc, Value *args) {
     printf("\033[33m");
     builtin_print(argc, args);
     printf("\033[0m");
+    fflush(stdout);   // ← Añadido para forzar el reinicio del color
     return val_make_null();
 }
 
@@ -46,6 +47,7 @@ static Value builtin_error(int argc, Value *args) {
     printf("\033[31m");
     builtin_print(argc, args);
     printf("\033[0m");
+    fflush(stdout);   // ← Añadido por lo mismo
     return val_make_null();
 }
 
@@ -53,6 +55,7 @@ static Value builtin_success(int argc, Value *args) {
     printf("\033[32m");
     builtin_print(argc, args);
     printf("\033[0m");
+    fflush(stdout);   // ← Añadido por lo mismo
     return val_make_null();
 }
 

@@ -1,8 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: parser/expression.c
-*/
-
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +59,7 @@ ASTNode *parse_primary() {
             if (!ts_match(TOK_RPAREN)) {
                 do {
                     n->data.call.args = realloc(n->data.call.args,
-                        (n->data.call.argc + 1) * sizeof(ASTNode*));
+                                                (n->data.call.argc + 1) * sizeof(ASTNode*));
                     n->data.call.args[n->data.call.argc++] = parse_expression(0);
                 } while (ts_match(TOK_COMMA));
                 if (!ts_match(TOK_RPAREN))
@@ -80,7 +79,7 @@ ASTNode *parse_primary() {
             n->data.call.args = NULL;
             return n;
         }
-        // Variable
+        // Variable (puede contener puntos, p.ej. "modulo.funcion" pero sin paréntesis)
         ASTNode *n = node_create(NODE_VAR, t.line);
         n->data.var.name = strdup(t.lexeme);
         while (ts_match(TOK_LBRACKET)) {
@@ -103,7 +102,7 @@ ASTNode *parse_primary() {
             do {
                 ts_skip_newlines();
                 n->data.list_lit.items = realloc(n->data.list_lit.items,
-                    (n->data.list_lit.count + 1) * sizeof(ASTNode*));
+                                                 (n->data.list_lit.count + 1) * sizeof(ASTNode*));
                 n->data.list_lit.items[n->data.list_lit.count++] = parse_expression(0);
                 ts_skip_newlines();
             } while (ts_match(TOK_COMMA));
@@ -131,6 +130,40 @@ ASTNode *parse_primary() {
     return NULL;
 }
 
+/* Acceso a miembros: modulo.funcion(args)
+ *  Como el lexer incluye el punto en los identificadores, este nodo ya llega
+ *  con un nombre compuesto. Si contiene un punto y luego hay '(', lo dividimos
+ *  y creamos una llamada a función con el nombre completo. */
+static ASTNode *parse_member_access() {
+    ASTNode *left = parse_primary();
+    // Si es una variable y su nombre contiene un punto, puede ser una llamada a función de módulo
+    if (left->kind == NODE_VAR && strchr(left->data.var.name, '.') != NULL) {
+        // Si a continuación hay '(', es una llamada
+        if (ts_peek().type == TOK_LPAREN) {
+            char *fullname = left->data.var.name;  // ej: "debootstrap-lib.normal"
+            ts_advance(); // '('
+            ASTNode *call = node_create(NODE_CALL, left->line);
+            call->data.call.name = strdup(fullname);
+            call->data.call.argc = 0;
+            call->data.call.args = NULL;
+            if (!ts_match(TOK_RPAREN)) {
+                do {
+                    call->data.call.args = realloc(call->data.call.args,
+                                                   (call->data.call.argc + 1) * sizeof(ASTNode*));
+                    call->data.call.args[call->data.call.argc++] = parse_expression(0);
+                } while (ts_match(TOK_COMMA));
+                if (!ts_match(TOK_RPAREN))
+                    error(left->line, "Se esperaba ')' en la llamada a '%s'", fullname);
+            }
+            // Liberar el nodo variable original, ya no se usa
+            free(left->data.var.name);
+            free(left);
+            return call;
+        }
+    }
+    return left;
+}
+
 /* Unary minus */
 static ASTNode *parse_unary() {
     Token t = ts_peek();
@@ -144,7 +177,7 @@ static ASTNode *parse_unary() {
         n->data.binop.right = right;
         return n;
     }
-    return parse_primary();
+    return parse_member_access();
 }
 
 static ASTNode *parse_term() {
