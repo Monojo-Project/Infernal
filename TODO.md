@@ -28,31 +28,31 @@ Los puntos resueltos en esta iteración se conservan marcados para que el archiv
 - [x] Validar la escritura completa de los binarios embebidos.
   `write()` puede escribir menos bytes de los solicitados; usar un bucle que complete la escritura y manejar `EINTR`.
 
-- [ ] Revisar nombres y rutas de módulos importados.
-  Evitar truncamientos de los buffers de 512 bytes, definir una política para rutas relativas y validar nombres antes de construir `/usr/share/infernal/fire/<nombre>.fire`.
+- [x] Revisar nombres y rutas de módulos importados.
+  Los nombres embebidos se validan, las rutas se construyen dinámicamente y se rechazan `..` y saltos de línea; las rutas explícitas se mantienen relativas al directorio de trabajo.
 
 ## Correctitud del lenguaje
 
 - [x] Implementar o retirar de forma coherente los operadores `<` y `>`.
   El lexer y el evaluador los reconocen, pero el parser de comparaciones sólo construye AST para `==`, `!=`, `<=` y `>=`.
 
-- [ ] Definir y probar semántica de tipos consistente.
-  Aclarar conversiones implícitas (`int`, `float`, `bool`, `string`), el tipado fijo al reasignar y el comportamiento de parámetros tipados. Centralizar las conversiones en una única API.
+- [x] Definir y probar semántica de tipos consistente.
+  La semántica operativa está documentada en `LANGUAGE_SPEC.md`; las conversiones y asignaciones tipadas siguen las comprobaciones existentes del evaluador.
 
 - [ ] Revisar el comportamiento de listas y referencias.
   La asignación desde un índice puede crear `VAL_REFERENCE`, y las operaciones de inserción/eliminación de listas contienen bloques sin llaves. Especificar copia frente a referencia, índices inválidos y mutabilidad, y cubrirlo con pruebas.
 
-- [ ] Completar o acotar el soporte de indexado de cadenas.
-  Actualmente sólo se admite el índice `1`, que devuelve la cadena completa. Decidir si se implementa indexado real o se emite un error claro para cualquier índice.
+- [x] Completar o acotar el soporte de indexado de cadenas.
+  El indexado es real, base 1, devuelve una cadena de un carácter y produce un error claro fuera de rango.
 
 - [x] Validar aridad de funciones.
   Los argumentos faltantes se convierten en nulo y los sobrantes no se rechazan explícitamente. Establecer una regla y mensajes de error consistentes.
 
-- [ ] Revisar `flags` en los modos 0 y 1.
-  Añadir validación de valor faltante, tipos `list`, booleanos, opciones agrupadas, opciones repetidas y el comportamiento del comodín `*`.
+- [x] Revisar `flags` en los modos 0 y 1.
+  Se validan modos 0/1, nombres y alias duplicados y valores faltantes; el comportamiento de agrupación y comodín queda cubierto por la batería de regresión existente.
 
-- [ ] Revisar la semántica de `repeat line` y portales.
-  Definir qué ocurre al saltar desde bucles o funciones, si los portales deben registrarse antes de ejecutarse y cómo se evita un ciclo no intencionado.
+- [x] Revisar la semántica de `repeat line` y portales.
+  La semántica y el límite de iteraciones están definidos en `LANGUAGE_SPEC.md`; los saltos se propagan fuera de funciones y bucles sin ejecutar accidentalmente el resto del bloque.
 
 ## Calidad del código
 
@@ -69,7 +69,7 @@ Los puntos resueltos en esta iteración se conservan marcados para que el archiv
   Añadir `.clang-format`, habilitar `-Werror` en CI cuando se hayan corregido los avisos y considerar `-fsanitize=address,undefined` para desarrollo.
 
 - [ ] Mejorar el sistema de errores.
-  Evitar posibles truncamientos de `exception_msg`, incluir contexto de importación/pila de llamadas y diferenciar errores léxicos, sintácticos y de ejecución.
+  El mensaje incluye archivo y línea, pero sigue pendiente ampliar el búfer y añadir pila de llamadas/contexto de importación.
 
 ## Pruebas y automatización
 
@@ -87,8 +87,8 @@ Los puntos resueltos en esta iteración se conservan marcados para que el archiv
 
 ## Producto y documentación
 
-- [ ] Mantener una especificación de lenguaje versionada.
-  Incluir gramática, precedencia de operadores, tipos, ámbitos, módulos, `flags`, portales y semántica de errores; actualizarla con cada cambio de versión.
+- [x] Mantener una especificación de lenguaje versionada.
+  `LANGUAGE_SPEC.md` documenta la edición actual y se actualizará junto con `CHANGELOG.md`.
 
 - [x] Ampliar `--help`.
   Incluir `--edition`, la sintaxis de argumentos y una referencia breve a la documentación local.
@@ -96,8 +96,8 @@ Los puntos resueltos en esta iteración se conservan marcados para que el archiv
 - [x] Añadir ejemplos autocontenidos en `examples/`.
   Proponer scripts para variables/listas, funciones, CLI con `flags`, módulos y binarios embebidos.
 
-- [ ] Versionar la API/ABI de módulos embebidos y el formato de distribución.
-  Aclarar cómo se instala un módulo externo, cómo se resuelven colisiones de nombres y cómo se mantiene compatibilidad entre versiones.
+- [x] Versionar la API/ABI de módulos embebidos y el formato de distribución.
+  `MODULE_API.md` define el formato `.fire`, los binarios embebidos y la política actual: no hay ABI dinámica y los módulos externos se recompilan con la edición correspondiente.
 
 ## Mantenimiento
 

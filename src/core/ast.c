@@ -5,9 +5,10 @@
 
 #include <stdlib.h>
 #include "ast.h"
+#include "memory.h"
 
 ASTNode *node_create(int kind, int line) {
-    ASTNode *n = calloc(1, sizeof(ASTNode));
+    ASTNode *n = infernal_calloc(1, sizeof(ASTNode));
     n->kind = kind;
     n->line = line;
     return n;
@@ -16,7 +17,7 @@ ASTNode *node_create(int kind, int line) {
 void nodelist_add(NodeList *list, ASTNode *node) {
     if (list->count >= list->cap) {
         list->cap = list->cap == 0 ? 8 : list->cap * 2;
-        list->stmts = realloc(list->stmts, list->cap * sizeof(ASTNode*));
+        list->stmts = infernal_realloc(list->stmts, list->cap * sizeof(ASTNode*));
     }
     list->stmts[list->count++] = node;
 }

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "value.h"
+#include "memory.h"
 
 Value val_make_null(void) {
     Value v; v.type = VAL_NULL; return v;
@@ -25,7 +26,7 @@ Value val_bool(bool x) {
 
 Value val_string(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.data.sval = strdup(s ? s : "");
+    v.data.sval = infernal_strdup(s);
     return v;
 }
 
@@ -39,8 +40,8 @@ Value val_list_empty(void) {
 void val_list_append(Value *list, Value item) {
     if (list->data.list.count >= list->data.list.cap) {
         list->data.list.cap = list->data.list.cap == 0 ? 4 : list->data.list.cap * 2;
-        list->data.list.items = realloc(list->data.list.items,
-                                        list->data.list.cap * sizeof(Value));
+        list->data.list.items = infernal_realloc(list->data.list.items,
+                                                 list->data.list.cap * sizeof(Value));
     }
     list->data.list.items[list->data.list.count++] = item;
 }
@@ -66,7 +67,7 @@ int valtype_to_tokentype(int vtype) {
 Value val_reference(const char *list_name, int index) {
     Value v;
     v.type = VAL_REFERENCE;
-    v.data.ref.list_name = strdup(list_name);
+    v.data.ref.list_name = infernal_strdup(list_name);
     v.data.ref.index = index;
     return v;
 }

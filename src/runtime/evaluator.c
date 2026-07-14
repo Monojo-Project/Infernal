@@ -243,16 +243,22 @@ Value eval_expr(ASTNode *expr) {
                     }
 
                     if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                        char buf[4096] = {0};
-                        if (left.type == VAL_STRING) strcat(buf, left.data.sval);
-                        else sprintf(buf + strlen(buf), "%d", left.type == VAL_INT ? left.data.ival :
-                            left.type == VAL_FLOAT ? (int)left.data.fval :
-                            left.data.bval ? 1 : 0);
-                        if (right.type == VAL_STRING) strcat(buf, right.data.sval);
-                        else sprintf(buf + strlen(buf), "%d", right.type == VAL_INT ? right.data.ival :
-                            right.type == VAL_FLOAT ? (int)right.data.fval :
-                            right.data.bval ? 1 : 0);
-                        return val_string(buf);
+                        char lbuf[64], rbuf[64];
+                        const char *ls = left.type == VAL_STRING ? left.data.sval : lbuf;
+                        const char *rs = right.type == VAL_STRING ? right.data.sval : rbuf;
+                        if (left.type != VAL_STRING)
+                            snprintf(lbuf, sizeof(lbuf), "%d", left.type == VAL_INT ? left.data.ival :
+                                     left.type == VAL_FLOAT ? (int)left.data.fval : left.data.bval ? 1 : 0);
+                        if (right.type != VAL_STRING)
+                            snprintf(rbuf, sizeof(rbuf), "%d", right.type == VAL_INT ? right.data.ival :
+                                     right.type == VAL_FLOAT ? (int)right.data.fval : right.data.bval ? 1 : 0);
+                        size_t total = strlen(ls) + strlen(rs) + 1;
+                        char *buf = malloc(total);
+                        if (!buf) error(expr->line, "Memoria insuficiente al concatenar cadenas");
+                        snprintf(buf, total, "%s%s", ls, rs);
+                        Value result = val_string(buf);
+                        free(buf);
+                        return result;
                     }
 
                     if (left.type == VAL_INT && right.type == VAL_INT) {
@@ -328,9 +334,14 @@ Value eval_expr(ASTNode *expr) {
                                     error(expr->line, "Índice fuera de rango");
                                 return base.data.list.items[i-1];
                             } else if (base.type == VAL_STRING) {
-                                if (idx.type == VAL_INT && idx.data.ival == 1)
-                                    return base;
-                                error(expr->line, "Índice de string no soportado");
+                                if (idx.type != VAL_INT)
+                                    error(expr->line, "El índice de string debe ser un entero");
+                                int position = idx.data.ival;
+                                size_t length = strlen(base.data.sval);
+                                if (position < 1 || (size_t)position > length)
+                                    error(expr->line, "Índice de string fuera de rango");
+                                char character[2] = {base.data.sval[position - 1], '\0'};
+                                return val_string(character);
                             }
                             error(expr->line, "No se puede indexar este tipo de valor");
                             return val_make_null();
@@ -670,7 +681,8 @@ void exec_block_from(NodeList *block, int start_index) {
                                 for (int s = 0; s < stmt->data.flags.spec_count; s++) {
                                     FlagSpec *spec = &stmt->data.flags.specs[s];
                                     if (spec->catch_all) continue;
-                                    if (arg_idx >= script_argc) break;
+                                    if (arg_idx >= script_argc)
+                                        error(stmt->line, "Falta el argumento para el flag posicional %d", arg_idx - 1);
                                     if (spec->vtype && spec->var_name) {
                                         char *val_str = script_argv[arg_idx];
                                         char cleaned[512]; int c = 0;
@@ -722,7 +734,9 @@ void exec_block_from(NodeList *block, int start_index) {
                                         for (int n = 0; n < spec->name_count; n++) {
                                             if (strcmp(arg_dup, spec->names[n]) == 0) {
                                                 if (spec->vtype && spec->var_name) {
-                                                    char *val_str = eq_pos ? eq_pos + 1 : (a+1 < script_argc ? script_argv[++a] : "");
+                                                    if (!eq_pos && a + 1 >= script_argc)
+                                                        error(stmt->line, "Falta el valor para el flag '%s'", arg_dup);
+                                                    char *val_str = eq_pos ? eq_pos + 1 : script_argv[++a];
                                                     char cleaned[512]; int c = 0;
                                                     if (val_str[0] == '"' || val_str[0] == '\'') {
                                                         char quote = val_str[0];

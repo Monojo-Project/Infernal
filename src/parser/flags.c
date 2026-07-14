@@ -13,7 +13,20 @@
 #include "expression.h"
 
 static bool is_valid_flag_name(const char *s) {
-    return s && (isalpha(s[0]) || s[0] == '_');
+    if (!s || !(isalpha((unsigned char)s[0]) || s[0] == '_')) return false;
+    for (const char *p = s + 1; *p; p++)
+        if (!(isalnum((unsigned char)*p) || *p == '_')) return false;
+    return true;
+}
+
+static void add_flag_name(FlagSpec *spec, const char *name, int line) {
+    for (int i = 0; i < spec->name_count; i++)
+        if (strcmp(spec->names[i], name) == 0)
+            error(line, "Flag o alias repetido: %s", name);
+    char **names = realloc(spec->names, (size_t)(spec->name_count + 1) * sizeof(char *));
+    if (!names) error(line, "Memoria insuficiente al registrar flag");
+    spec->names = names;
+    spec->names[spec->name_count++] = strdup(name);
 }
 
 void parse_flag_body_tokens(Token **body_tokens, int *body_count) {
@@ -47,7 +60,8 @@ ASTNode *parse_flags() {
 
     ASTNode *node = node_create(NODE_FLAGS, mode_expr->line);
     node->data.flags.mode = 0;
-    if (mode_expr->kind == NODE_LITERAL && mode_expr->data.lit.type == TOK_INT)
+    if (mode_expr->kind == NODE_LITERAL && mode_expr->data.lit.type == TOK_INT &&
+        (mode_expr->data.lit.ival == 0 || mode_expr->data.lit.ival == 1))
         node->data.flags.mode = mode_expr->data.lit.ival;
     else
         error(mode_expr->line, "El modo de flags debe ser 0 o 1");
@@ -82,8 +96,7 @@ ASTNode *parse_flags() {
             } else {
                 error(ts_peek().line, "Se esperaba un flag (--nombre, -n o nombre)");
             }
-            spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
-            spec.names[spec.name_count-1] = strdup(name_buf);
+            add_flag_name(&spec, name_buf, ts_peek().line);
 
             while (ts_peek().type == TOK_PIPE) {
                 ts_advance();
@@ -103,8 +116,7 @@ ASTNode *parse_flags() {
                 } else {
                     error(ts_peek().line, "Alias debe ser un identificador, con o sin guiones");
                 }
-                spec.names = realloc(spec.names, (++spec.name_count)*sizeof(char*));
-                spec.names[spec.name_count-1] = strdup(alias_buf);
+                add_flag_name(&spec, alias_buf, ts_peek().line);
             }
 
             if (ts_match(TOK_EQ)) {

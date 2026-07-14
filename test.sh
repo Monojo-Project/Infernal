@@ -35,4 +35,19 @@ run_case lists $'verde\namarillo' \
     'colores[2] = "amarillo"' \
     'print(colores[2])'
 
+run_case string_index 'n' \
+    'print("Infernal"[2])'
+
+flags_script="$tmpdir/flags.infernal"
+printf '%s\n' \
+    'flags(0,' \
+    '    --nombre = string nombre {' \
+    '        print(nombre)' \
+    '    }' \
+    ')' > "$flags_script"
+if [[ "$($infernal "$flags_script" --nombre Ada)" != "Ada" ]]; then
+    printf 'Caso flags falló.\n' >&2
+    exit 1
+fi
+
 printf 'OK: pruebas de Infernal\n'

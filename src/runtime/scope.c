@@ -7,9 +7,10 @@
 #include "scope.h"
 #include "core/value.h"
 #include "runtime/error.h"
+#include "core/memory.h"
 
 Scope *scope_new(Scope *parent) {
-    Scope *s = malloc(sizeof(Scope));
+    Scope *s = infernal_malloc(sizeof(Scope));
     s->vars = NULL;
     s->portals = NULL;
     s->parent = parent;
@@ -36,8 +37,8 @@ VarEntry *scope_find_script(Scope *scope, const char *name) {
 }
 
 void scope_define(Scope *scope, const char *name, int vtype, Value val) {
-    VarEntry *e = malloc(sizeof(VarEntry));
-    e->name = strdup(name);
+    VarEntry *e = infernal_malloc(sizeof(VarEntry));
+    e->name = infernal_strdup(name);
     e->vtype = vtype ? vtype : valtype_to_tokentype(val.type);
     e->value = val;
     e->next = scope->vars;
@@ -81,8 +82,8 @@ PortalEntry *portal_find_in_scope(Scope *scope, const char *name) {
 }
 
 void portal_define(Scope *scope, const char *name, int line) {
-    PortalEntry *p = malloc(sizeof(PortalEntry));
-    p->name = strdup(name);
+    PortalEntry *p = infernal_malloc(sizeof(PortalEntry));
+    p->name = infernal_strdup(name);
     p->line = line;
     p->next = scope->portals;
     scope->portals = p;

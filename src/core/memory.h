@@ -6,8 +6,12 @@
 #ifndef CORE_MEMORY_H
 #define CORE_MEMORY_H
 
-#include <stdlib.h>
-#define infernal_malloc(sz) malloc(sz)
-#define infernal_free(ptr)  free(ptr)
+#include <stddef.h>
+
+void *infernal_malloc(size_t size);
+void *infernal_calloc(size_t count, size_t size);
+void *infernal_realloc(void *ptr, size_t size);
+char *infernal_strdup(const char *value);
+#define infernal_free(ptr) free(ptr)
 
 #endif

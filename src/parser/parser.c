@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "parser.h"
 #include "core/ast.h"
 #include "lexer/lexer.h"
@@ -20,6 +21,19 @@ static void validate_var_name(const char *name, int line) {
     const char invalid[] = "@[](){}";
     for (const char *p = name; *p; p++)
         if (strchr(invalid, *p)) error(line, "Carácter inválido '%c' en nombre de variable", *p);
+}
+
+static bool valid_module_name(const char *name) {
+    if (!name || !*name || strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+        return false;
+    for (const char *p = name; *p; p++) {
+        if (!(isalnum((unsigned char)*p) || *p == '_' || *p == '-')) return false;
+    }
+    return true;
+}
+
+static bool safe_module_path(const char *path) {
+    return path && *path && !strstr(path, "..") && !strchr(path, '\n') && !strchr(path, '\r');
 }
 
 ASTNode *parse_if_statement() {
@@ -355,23 +369,31 @@ NodeList parse_block(const char *terminator) {
                 error(t.line, "Se esperaba nombre o ruta en import");
             }
 
+            if (nt.type == TOK_IDENT && !valid_module_name(module_name))
+                error(t.line, "Nombre de módulo inválido: %s", module_name);
+
             TokenStream old_ts = ts;
             ts_init();
 
             if (use_embedded) {
                 tokenize_buffer((const char*)emb_data, emb_size);
             } else {
-                char path[512];
+                char *path = NULL;
                 if (nt.type == TOK_IDENT) {
-                    snprintf(path, sizeof(path), "/usr/share/infernal/fire/%s.fire", module_name);
+                    if (!valid_module_name(module_name))
+                        error(t.line, "Nombre de módulo inválido: %s", module_name);
+                    if (asprintf(&path, "/usr/share/infernal/fire/%s.fire", module_name) < 0)
+                        error(t.line, "Memoria insuficiente al construir la ruta del módulo");
                 } else {
-                    strncpy(path, nt.lexeme, sizeof(path));
-                    path[sizeof(path)-1] = '\0';
+                    if (!safe_module_path(nt.lexeme))
+                        error(t.line, "Ruta de módulo inválida o insegura: %s", nt.lexeme);
+                    path = strdup(nt.lexeme);
                 }
                 FILE *fp = fopen(path, "r");
                 if (!fp) error(t.line, "No se pudo abrir módulo: %s", path);
                 tokenize_file(fp);
                 fclose(fp);
+                free(path);
             }
 
             char *prefix_base = module_name;
