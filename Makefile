@@ -64,7 +64,7 @@ DEPS := $(ALL_OBJS:.o=.d)
 # --------------------------------------------------------------------
 # Reglas principales
 # --------------------------------------------------------------------
-.PHONY: all clean distclean help
+.PHONY: all clean distclean help test sanitize
 
 all: $(TARGET)
 
@@ -226,3 +226,11 @@ help:
 	@echo "Fuentes: $(words $(SOURCES)) archivos .c"
 	@echo "Módulos .fire empaquetados: $(words $(FIRE_FILES))"
 	@echo "Módulos binarios empaquetados: $(words $(BIN_FILES))"
+
+test: $(TARGET)
+	@./tests/run.sh ./$(TARGET)
+
+sanitize:
+	$(MAKE) clean
+	$(MAKE) CFLAGS='$(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer' \
+	        LDFLAGS='$(LDFLAGS) -fsanitize=address,undefined' all
