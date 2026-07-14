@@ -228,10 +228,10 @@ help:
 	@echo "Módulos binarios empaquetados: $(words $(BIN_FILES))"
 
 test: $(TARGET)
-	@./tests/run.sh ./$(TARGET)
+	@./test.sh ./$(TARGET)
 
 sanitize:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='$(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer' \
 	        LDFLAGS='$(LDFLAGS) -fsanitize=address,undefined' all
-	@./tests/run.sh ./$(TARGET)
+	@./test.sh ./$(TARGET)

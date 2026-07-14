@@ -1,0 +1,2 @@
+user = hostname #lo ejecuta como comando de shell
+print(user)

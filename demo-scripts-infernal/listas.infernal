@@ -1,5 +1,5 @@
 # Variables, listas, funciones y control de flujo.
-list nombres = ["Ada", "Linus"]
+list nombres = ["Ada", "Linus", "Richard", "David"]
 
 function saludar(string nombre)
     return "Hola, " + nombre
