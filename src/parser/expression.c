@@ -203,11 +203,12 @@ static ASTNode *parse_expr() {
     return left;
 }
 
-/* Comparación: solo <=, >=, ==, != (sin < ni >) */
+/* Comparaciones numéricas y de igualdad. */
 static ASTNode *parse_comparison() {
     ASTNode *left = parse_expr();
     TokenType op = ts_peek().type;
-    if (op == TOK_EEQ || op == TOK_NEQ || op == TOK_LE || op == TOK_GE) {
+    if (op == TOK_EEQ || op == TOK_NEQ || op == TOK_LT_OP || op == TOK_GT_OP ||
+        op == TOK_LE || op == TOK_GE) {
         Token t = ts_advance();
         ASTNode *right = parse_expr();
         ASTNode *n = node_create(NODE_BINOP, t.line);

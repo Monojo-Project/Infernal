@@ -42,9 +42,10 @@ static const char *type_name(int tok_type) {
 static bool is_float_string(const char *s) {
     if (!s || !*s) return false;
     char *normalized = strdup(s);
-    for (char *p = normalized; *p; p++)
+    for (char *p = normalized; *p; p++) {
         if (*p == ',') *p = '.';
-        char *end;
+    }
+    char *end;
     strtod(normalized, &end);
     bool ok = (*end == '\0' && end != normalized);
     free(normalized);
@@ -69,9 +70,10 @@ static bool try_convert_value(Value *val, int target_tok_type) {
 
         if (target_tok_type == TOK_FLOAT) {
             char *normalized = strdup(s);
-            for (char *p = normalized; *p; p++)
+            for (char *p = normalized; *p; p++) {
                 if (*p == ',') *p = '.';
-                char *end;
+            }
+            char *end;
             double f = strtod(normalized, &end);
             if (*end == '\0' && end != normalized) {
                 free(val->data.sval);
@@ -147,7 +149,7 @@ Value eval_expr(ASTNode *expr) {
                 if (!list_var || list_var->value.type != VAL_LIST)
                     error(expr->line, "La referencia apunta a una lista inexistente '%s'",
                           e->value.data.ref.list_name);
-                    int idx = e->value.data.ref.index;
+                int idx = e->value.data.ref.index;
                 if (idx < 1 || idx > list_var->value.data.list.count)
                     error(expr->line, "Índice de referencia fuera de rango");
                 return list_var->value.data.list.items[idx - 1];
@@ -181,18 +183,20 @@ Value eval_expr(ASTNode *expr) {
             if (left.type == VAL_LIST && expr->data.binop.op == TOK_PLUS &&
                 expr->data.binop.right->kind == NODE_INDEX) {
                 ASTNode *idx_node = expr->data.binop.right;
-            Value base = eval_expr(idx_node->data.idx.list);
-            Value index_val = eval_expr(idx_node->data.idx.index);
-            int pos = (index_val.type == VAL_INT) ? index_val.data.ival : 1;
-            Value new_list = val_list_copy(&left);
-            if (pos < 1 || pos > new_list.data.list.count + 1)
-                pos = new_list.data.list.count + 1;
-                val_list_append(&new_list, val_make_null());
-            for (int i = new_list.data.list.count-1; i > pos-1; i--)
-                new_list.data.list.items[i] = new_list.data.list.items[i-1];
-                new_list.data.list.items[pos-1] = base;
-            return new_list;
+                Value base = eval_expr(idx_node->data.idx.list);
+                Value index_val = eval_expr(idx_node->data.idx.index);
+                int pos = (index_val.type == VAL_INT) ? index_val.data.ival : 1;
+                Value new_list = val_list_copy(&left);
+                if (pos < 1 || pos > new_list.data.list.count + 1) {
+                    pos = new_list.data.list.count + 1;
                 }
+                val_list_append(&new_list, val_make_null());
+                for (int i = new_list.data.list.count - 1; i > pos - 1; i--) {
+                    new_list.data.list.items[i] = new_list.data.list.items[i - 1];
+                }
+                new_list.data.list.items[pos-1] = base;
+                return new_list;
+            }
 
                 Value right = eval_expr(expr->data.binop.right);
 
@@ -292,6 +296,11 @@ Value eval_expr(ASTNode *expr) {
                                 return ret;
                             } else {
                                 ASTNode *func = fobj->def;
+                                if (expr->data.call.argc != func->data.func.param_count) {
+                                    error(expr->line, "La función '%s' espera %d argumento(s), recibió %d",
+                                          expr->data.call.name, func->data.func.param_count,
+                                          expr->data.call.argc);
+                                }
                                 Scope *new_scope = scope_new(current_scope);
                                 Scope *prev_scope = current_scope;
                                 current_scope = new_scope;
@@ -324,6 +333,7 @@ Value eval_expr(ASTNode *expr) {
                                 error(expr->line, "Índice de string no soportado");
                             }
                             error(expr->line, "No se puede indexar este tipo de valor");
+                            return val_make_null();
                         }
                         default:
                             error(expr->line, "Expresión no implementada");
@@ -646,10 +656,14 @@ void exec_block_from(NodeList *block, int start_index) {
                             int mode = stmt->data.flags.mode;
                             bool *handled = calloc(script_argc, sizeof(bool));
                             FlagSpec *catch_all = NULL;
-                            for (int s = 0; s < stmt->data.flags.spec_count; s++)
-                                if (stmt->data.flags.specs[s].catch_all) { catch_all = &stmt->data.flags.specs[s]; break; }
+                            for (int s = 0; s < stmt->data.flags.spec_count; s++) {
+                                if (stmt->data.flags.specs[s].catch_all) {
+                                    catch_all = &stmt->data.flags.specs[s];
+                                    break;
+                                }
+                            }
 
-                                int total_matched = 0;
+                            int total_matched = 0;
 
                             if (mode == 1) {
                                 int arg_idx = 2;
@@ -748,9 +762,17 @@ void exec_block_from(NodeList *block, int start_index) {
                                             for (int s = 0; s < stmt->data.flags.spec_count; s++) {
                                                 FlagSpec *spec = &stmt->data.flags.specs[s];
                                                 if (spec->catch_all) continue;
-                                                for (int n = 0; n < spec->name_count; n++)
-                                                    if (strcmp(sn, spec->names[n]) == 0) { exec_flag_spec(spec); found = true; total_matched++; break; }
-                                                    if (found) break;
+                                                for (int n = 0; n < spec->name_count; n++) {
+                                                    if (strcmp(sn, spec->names[n]) == 0) {
+                                                        exec_flag_spec(spec);
+                                                        found = true;
+                                                        total_matched++;
+                                                        break;
+                                                    }
+                                                }
+                                                if (found) {
+                                                    break;
+                                                }
                                             }
                                             if (!found && catch_all) {
                                                 scope_define(current_scope, "_", 0, val_string(sn));
