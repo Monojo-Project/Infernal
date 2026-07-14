@@ -95,11 +95,18 @@ static char *prepare_embedded_binary(const char *cmd_name) {
     char tmp_path[PATH_MAX];
     int fd = -1;
 
-    /* 1. Directorio actual */
-    if (access(".", W_OK) == 0) {
-        mkdir("./.infernal_tmp", 0700);
-        snprintf(tmp_path, sizeof(tmp_path), "./.infernal_tmp/infernal_XXXXXX");
-        fd = mkstemp(tmp_path);
+    /* 1. Directorio del script (o directorio actual si no está disponible). */
+    const char *base_dir = embedded_tmp_dir ? embedded_tmp_dir : ".";
+    if (access(base_dir, W_OK) == 0) {
+        char work_dir[PATH_MAX];
+        int dir_len = snprintf(work_dir, sizeof(work_dir), "%s/.infernal_tmp", base_dir);
+        if (dir_len > 0 && (size_t)dir_len < sizeof(work_dir) &&
+            (mkdir(work_dir, 0700) == 0 || errno == EEXIST)) {
+            int path_len = snprintf(tmp_path, sizeof(tmp_path), "%s/infernal_XXXXXX", work_dir);
+            if (path_len > 0 && (size_t)path_len < sizeof(tmp_path)) {
+                fd = mkstemp(tmp_path);
+            }
+        }
     }
 
     /* 2. /tmp */
@@ -120,12 +127,17 @@ static char *prepare_embedded_binary(const char *cmd_name) {
         return NULL;
     }
 
-    ssize_t written = write(fd, data, size);
-    if (written != (ssize_t)size) {
-        perror("write");
-        close(fd);
-        unlink(tmp_path);
-        return NULL;
+    size_t offset = 0;
+    while (offset < size) {
+        ssize_t written = write(fd, data + offset, size - offset);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            perror("write");
+            close(fd);
+            unlink(tmp_path);
+            return NULL;
+        }
+        offset += (size_t)written;
     }
 
     fdatasync(fd);
@@ -199,15 +211,20 @@ FILE *popen_embedded_with_path(const char *full_cmd, const char *mode, char **te
 }
 
 void cleanup_embedded_temp_dir(void) {
-    DIR *d = opendir("./.infernal_tmp");
+    const char *base_dir = embedded_tmp_dir ? embedded_tmp_dir : ".";
+    char work_dir[PATH_MAX];
+    int dir_len = snprintf(work_dir, sizeof(work_dir), "%s/.infernal_tmp", base_dir);
+    if (dir_len <= 0 || (size_t)dir_len >= sizeof(work_dir)) return;
+    DIR *d = opendir(work_dir);
     if (!d) return;
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
         char full_path[PATH_MAX];
-        snprintf(full_path, sizeof(full_path), "./.infernal_tmp/%s", entry->d_name);
+        int path_len = snprintf(full_path, sizeof(full_path), "%s/%s", work_dir, entry->d_name);
+        if (path_len <= 0 || (size_t)path_len >= sizeof(full_path)) continue;
         unlink(full_path);
     }
     closedir(d);
-    rmdir("./.infernal_tmp");
+    rmdir(work_dir);
 }
