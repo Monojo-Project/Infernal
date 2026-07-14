@@ -14,6 +14,10 @@ make
 Y ya se crea el intérprete como el archivo llamado `infernal`.
 Puedes borrar la carpeta `build` después de compilarlo; solo se utiliza durante la compilación.
 
+## Desarrollo
+
+Infernal se desarrolla y prueba en sistemas POSIX con `make`, un compilador C11 y las APIs GNU/POSIX usadas por el intérprete. Ejecuta `make test` para la batería de regresión y `make sanitize` para compilar y ejecutar pruebas con AddressSanitizer y UndefinedBehaviorSanitizer.
+
 
 ## Cómo personalizar/adaptar el intérprete
 Personalizar el intérprete adaptándolo a tu aplicación es sencillo. En la carpeta llamada `config` tienes todas las configuraciones.
