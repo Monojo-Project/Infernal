@@ -359,7 +359,8 @@ NodeList parse_block(const char *terminator) {
             if (nt.type == TOK_IDENT) {
                 module_name = strdup(nt.lexeme);
                 ts_advance();
-                if (embedded_find(module_name, &emb_data, &emb_size)) {
+                // CORRECCIÓN: añadido NULL como cuarto argumento (compressed flag no se necesita aquí)
+                if (embedded_find(module_name, &emb_data, &emb_size, NULL)) {
                     use_embedded = 1;
                 }
             } else if (nt.type == TOK_STRING_LITERAL) {

@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <dlfcn.h>
 
 #include "command.h"
 #include "runtime/scope.h"
@@ -85,17 +86,126 @@ char *expand_command(const char *cmd) {
     return realloc(result, len + 1);
 }
 
-/* ─── Extracción del binario embebido (devuelve ruta absoluta, SIN borrar) ─── */
+/* ─── Descompresión usando libz cargada dinámicamente ─── */
+static unsigned char *gunzip_data(const unsigned char *compressed, size_t compressed_len, size_t *out_len) {
+    static void *zlib_handle = NULL;
+    static int zlib_available = -1;  // -1 = no verificado, 0 = no, 1 = sí
+
+    // Cargar libz si aún no se ha hecho
+    if (zlib_available == -1) {
+        zlib_handle = dlopen("libz.so.1", RTLD_LAZY);
+        if (!zlib_handle) {
+            zlib_available = 0;
+        } else {
+            // Comprobar que las funciones necesarias existen
+            if (!dlsym(zlib_handle, "inflateInit2_") ||
+                !dlsym(zlib_handle, "inflate") ||
+                !dlsym(zlib_handle, "inflateEnd")) {
+                dlclose(zlib_handle);
+                zlib_handle = NULL;
+                zlib_available = 0;
+            } else {
+                zlib_available = 1;
+            }
+        }
+    }
+
+    if (zlib_available == 0) {
+        fprintf(stderr, "Error en descompresión de embebidos comprimidos: falta zlib (no está disponible en el sistema).\n");
+        return NULL;
+    }
+
+    // Tipos y funciones de zlib cargados dinámicamente
+    typedef void *(*alloc_func)(void *opaque, unsigned items, unsigned size);
+    typedef void  (*free_func)(void *opaque, void *address);
+
+    typedef struct z_stream_s {
+        unsigned char *next_in;
+        unsigned     avail_in;
+        unsigned long total_in;
+        unsigned char *next_out;
+        unsigned     avail_out;
+        unsigned long total_out;
+        char         *msg;
+        void         *state;
+        alloc_func   zalloc;
+        free_func    zfree;
+        void         *opaque;
+        int          data_type;
+        unsigned long adler;
+        unsigned long reserved;
+    } z_stream;
+
+    typedef int (*inflateInit2_t)(z_stream *strm, int windowBits, const char *version, int stream_size);
+    typedef int (*inflate_t)(z_stream *strm, int flush);
+    typedef int (*inflateEnd_t)(z_stream *strm);
+
+    inflateInit2_t p_inflateInit2 = (inflateInit2_t)dlsym(zlib_handle, "inflateInit2_");
+    inflate_t      p_inflate      = (inflate_t)dlsym(zlib_handle, "inflate");
+    inflateEnd_t   p_inflateEnd   = (inflateEnd_t)dlsym(zlib_handle, "inflateEnd");
+
+    #define Z_OK            0
+    #define Z_STREAM_END    1
+    #define Z_FINISH        4
+    #define MAX_WBITS       15
+
+    z_stream strm = {0};
+    if (p_inflateInit2(&strm, 16 + MAX_WBITS, "1.2.13", sizeof(strm)) != Z_OK)
+        return NULL;
+
+    size_t buf_size = compressed_len * 4 + 1024;
+    unsigned char *out = malloc(buf_size);
+    if (!out) { p_inflateEnd(&strm); return NULL; }
+
+    strm.next_in  = (unsigned char *)compressed;
+    strm.avail_in = compressed_len;
+    strm.next_out = out;
+    strm.avail_out = buf_size;
+
+    int ret;
+    while ((ret = p_inflate(&strm, Z_FINISH)) != Z_STREAM_END) {
+        if (ret != Z_OK) {
+            free(out);
+            p_inflateEnd(&strm);
+            return NULL;
+        }
+        size_t used = strm.next_out - out;
+        buf_size *= 2;
+        unsigned char *tmp = realloc(out, buf_size);
+        if (!tmp) { free(out); p_inflateEnd(&strm); return NULL; }
+        out = tmp;
+        strm.next_out = out + used;
+        strm.avail_out = buf_size - used;
+    }
+    *out_len = strm.next_out - out;
+    p_inflateEnd(&strm);
+    return out;
+}
+
+/* ─── Extracción del binario embebido (con soporte de compresión) ─── */
 static char *prepare_embedded_binary(const char *cmd_name) {
     const unsigned char *data = NULL;
     size_t size = 0;
-    if (!embedded_find(cmd_name, &data, &size))
+    int compressed = 0;
+    if (!embedded_find(cmd_name, &data, &size, &compressed))
         return NULL;
+
+    const unsigned char *raw_data = data;
+    size_t raw_size = size;
+    unsigned char *decompressed = NULL;
+
+    if (compressed) {
+        decompressed = gunzip_data(data, size, &raw_size);
+        if (!decompressed) {
+            fprintf(stderr, "Error: no se pudo descomprimir el binario embebido '%s'\n", cmd_name);
+            return NULL;
+        }
+        raw_data = decompressed;
+    }
 
     char tmp_path[PATH_MAX];
     int fd = -1;
 
-    /* 1. Directorio del script (o directorio actual si no está disponible). */
     const char *base_dir = embedded_tmp_dir ? embedded_tmp_dir : ".";
     if (access(base_dir, W_OK) == 0) {
         char work_dir[PATH_MAX];
@@ -109,7 +219,6 @@ static char *prepare_embedded_binary(const char *cmd_name) {
         }
     }
 
-    /* 2. /tmp */
     if (fd == -1) {
         const char *tmpdir = getenv("TMPDIR");
         if (tmpdir && tmpdir[0]) {
@@ -124,17 +233,19 @@ static char *prepare_embedded_binary(const char *cmd_name) {
 
     if (fd == -1) {
         perror("mkstemp");
+        free(decompressed);
         return NULL;
     }
 
     size_t offset = 0;
-    while (offset < size) {
-        ssize_t written = write(fd, data + offset, size - offset);
+    while (offset < raw_size) {
+        ssize_t written = write(fd, raw_data + offset, raw_size - offset);
         if (written < 0) {
             if (errno == EINTR) continue;
             perror("write");
             close(fd);
             unlink(tmp_path);
+            free(decompressed);
             return NULL;
         }
         offset += (size_t)written;
@@ -144,7 +255,8 @@ static char *prepare_embedded_binary(const char *cmd_name) {
     fchmod(fd, 0700);
     close(fd);
 
-    // Obtener ruta absoluta (el archivo sigue existiendo)
+    free(decompressed);
+
     char *abs_path = realpath(tmp_path, NULL);
     if (!abs_path) {
         perror("realpath");
@@ -154,7 +266,6 @@ static char *prepare_embedded_binary(const char *cmd_name) {
     return abs_path;
 }
 
-/* ─── Ejecutar comando embebido (SIN fallback a /bin/sh) ─── */
 int execute_embedded(const char *full_cmd) {
     if (!full_cmd) return -1;
 
@@ -175,10 +286,6 @@ int execute_embedded(const char *full_cmd) {
     if (rest && *rest) { strcat(exec_cmd, " "); strcat(exec_cmd, rest); }
 
     int ret = system(exec_cmd);
-
-    // *** CORRECCIÓN: se elimina el fallback con /bin/sh ***
-    // (anteriormente intentaba ejecutar de nuevo con /bin/sh, lo que causaba
-    //  errores de sintaxis en scripts de Bash al usar dash)
 
     unlink(binary_path);
     free(binary_path);

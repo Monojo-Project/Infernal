@@ -4,13 +4,12 @@
 #   make clean    - elimina objetos y ejecutable (NO borra nada en config/)
 #   make distclean- limpia también los archivos generados de .fire y metadatos (NO borra config/)
 #   make help     - muestra esta ayuda
-
 # --------------------------------------------------------------------
 # Configuración
 # --------------------------------------------------------------------
 CC       := gcc
 CFLAGS   := -Wall -Wextra -g -std=c11 -D_GNU_SOURCE
-LDFLAGS  :=
+LDFLAGS  := -ldl
 INCDIRS  := -Isrc
 
 SRCDIR       := src
@@ -21,6 +20,38 @@ FIRE_GEN_DIR := $(BUILDDIR)/gen_fire
 BIN_GEN_DIR  := $(BUILDDIR)/gen_bins
 META_DIR     := src/metadata
 TARGET       := infernal
+
+# --------------------------------------------------------------------
+# Valores por defecto
+# --------------------------------------------------------------------
+GZIP_EMBEDDED := 1
+
+# --------------------------------------------------------------------
+# Leer configuración solo si estamos compilando (no en clean/help/...)
+# --------------------------------------------------------------------
+ifeq ($(filter clean distclean help,$(MAKECMDGOALS)),)
+  GZIP_CONFIG := config/gzip-embedded.bool
+  ifeq ($(wildcard $(GZIP_CONFIG)),)
+    $(warning Archivo $(GZIP_CONFIG) no encontrado. Se usará compresión gzip por defecto (true).)
+  else
+    GZIP_VAL := $(shell cat $(GZIP_CONFIG) | tr '[:upper:]' '[:lower:]')
+    ifeq ($(GZIP_VAL),true)
+      GZIP_EMBEDDED := 1
+    else ifeq ($(GZIP_VAL),false)
+      GZIP_EMBEDDED := 0
+    else
+      $(warning $(GZIP_CONFIG) contiene '$(GZIP_VAL)' en lugar de 'true' o 'false'. Se usará compresión gzip por defecto (true).)
+      GZIP_EMBEDDED := 1
+    endif
+  endif
+
+  ifeq ($(GZIP_EMBEDDED),1)
+    $(info Compresión gzip de binarios embebidos: ACTIVADA)
+    $(info La descompresión en ejecución usará zlib del sistema (carga dinámica).)
+  else
+    $(info Compresión gzip de binarios embebidos: DESACTIVADA)
+  endif
+endif
 
 # --------------------------------------------------------------------
 # Búsqueda automática de fuentes
@@ -79,7 +110,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 # --------------------------------------------------------------------
-# Reglas para módulos .fire
+# Reglas para módulos .fire (sin comprimir)
 # --------------------------------------------------------------------
 ifneq ($(FIRE_FILES),)
 $(FIRE_GEN_DIR)/%.fire.c: $(FIRE_SRC_DIR)/%.fire
@@ -99,7 +130,7 @@ $(FIRE_GEN_DIR)/%.o: $(FIRE_GEN_DIR)/%.c
 endif
 
 # --------------------------------------------------------------------
-# Reglas para módulos binarios (bins)
+# Reglas para módulos binarios (bins) con compresión opcional
 # --------------------------------------------------------------------
 ifneq ($(BIN_FILES),)
 $(BIN_GEN_DIR)/%.c: $(BIN_SRC_DIR)/%
@@ -107,10 +138,17 @@ $(BIN_GEN_DIR)/%.c: $(BIN_SRC_DIR)/%
 	@echo " [BIN] $< -> $@"
 	@name=$$(basename $<); \
 	sanename=$$(echo $${name} | tr '-' '_'); \
-	echo "unsigned char config_infernal_bins_$${sanename}[] = {" > $@; \
-	od -A n -t x1 -v < "$<" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]\{1,\}/, 0x/g' -e 's/^, //' -e 's/^/0x/' -e 's/$$/,/' >> $@; \
-	echo "};" >> $@; \
-	echo "unsigned int config_infernal_bins_$${sanename}_len = sizeof(config_infernal_bins_$${sanename});" >> $@
+	if [ $(GZIP_EMBEDDED) -eq 1 ]; then \
+	  echo "unsigned char config_infernal_bins_$${sanename}[] = {" > $@; \
+	  gzip -c < "$<" | od -A n -t x1 -v | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]\{1,\}/, 0x/g' -e 's/^, //' -e 's/^/0x/' -e 's/$$/,/' >> $@; \
+	  echo "};" >> $@; \
+	  echo "unsigned int config_infernal_bins_$${sanename}_len = sizeof(config_infernal_bins_$${sanename});" >> $@; \
+	else \
+	  echo "unsigned char config_infernal_bins_$${sanename}[] = {" > $@; \
+	  od -A n -t x1 -v < "$<" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]\{1,\}/, 0x/g' -e 's/^, //' -e 's/^/0x/' -e 's/$$/,/' >> $@; \
+	  echo "};" >> $@; \
+	  echo "unsigned int config_infernal_bins_$${sanename}_len = sizeof(config_infernal_bins_$${sanename});" >> $@; \
+	fi
 
 $(BIN_GEN_DIR)/%.o: $(BIN_GEN_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -119,7 +157,7 @@ $(BIN_GEN_DIR)/%.o: $(BIN_GEN_DIR)/%.c
 endif
 
 # --------------------------------------------------------------------
-# Tabla de módulos embebidos
+# Tabla de módulos embebidos (con indicador de compresión)
 # --------------------------------------------------------------------
 $(EMBED_TABLE_SRC): $(FIRE_FILES) $(BIN_FILES)
 	@mkdir -p $(dir $@)
@@ -144,14 +182,14 @@ $(EMBED_TABLE_SRC): $(FIRE_FILES) $(BIN_FILES)
 	@for f in $(FIRE_FILES); do \
 		name=$$(basename $$f .fire); \
 		sanename=$$(echo $${name} | tr '-' '_'); \
-		echo "  {\"$$name\", config_infernal_fire_$${sanename}, &config_infernal_fire_$${sanename}_len}," >> $@; \
+		echo "  {\"$$name\", config_infernal_fire_$${sanename}, &config_infernal_fire_$${sanename}_len, 0}," >> $@; \
 	done
 	@for f in $(BIN_FILES); do \
 		name=$$(basename $$f); \
 		sanename=$$(echo $${name} | tr '-' '_'); \
-		echo "  {\"$$name\", config_infernal_bins_$${sanename}, &config_infernal_bins_$${sanename}_len}," >> $@; \
+		echo "  {\"$$name\", config_infernal_bins_$${sanename}, &config_infernal_bins_$${sanename}_len, $(GZIP_EMBEDDED)}," >> $@; \
 	done
-	@echo '  {NULL, NULL, NULL}' >> $@
+	@echo '  {NULL, NULL, NULL, 0}' >> $@
 	@echo '};' >> $@
 
 $(EMBED_TABLE_OBJ): $(EMBED_TABLE_SRC)
