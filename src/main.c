@@ -49,37 +49,35 @@ int main(int argc, char **argv) {
     }
 
     script_argc = argc;
-    script_argv = argv;
-
+    script_argv = argv;                   
     // Directorio del script para temporales y here()
     char *script_path = realpath(argv[1], NULL);
-    if (script_path) {
+    if (script_path) {                            
         char *dir = strdup(script_path);
         char *last_slash = strrchr(dir, '/');
         if (last_slash) {
-            *last_slash = '\0';
+            *last_slash = '\0';                       
             set_embedded_tmp_dir(dir);
             script_dir = strdup(dir);   // <-- guardar ruta del script
-        } else {
+        } else {                                      
             char cwd[PATH_MAX];
-            if (getcwd(cwd, sizeof(cwd)) != NULL) {
-                set_embedded_tmp_dir(cwd);
+            if (getcwd(cwd, sizeof(cwd)) != NULL) {                                                 
+                set_embedded_tmp_dir(cwd);                
                 script_dir = strdup(cwd);
-            }
+            }                                     
         }
-        free(dir);
+        free(dir);                                
         free(script_path);
     } else {
         char cwd[PATH_MAX];
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
-            set_embedded_tmp_dir(cwd);
+            set_embedded_tmp_dir(cwd);                
             script_dir = strdup(cwd);
         }
-    }
-
-    // Guardar el nombre del archivo principal para los mensajes de error
+    }                                     
+    // Guardar el nombre del archivo principal para los mensajes de error               
     current_source_file = argv[1];
-
+                                              
     super_global_scope = scope_new(NULL);
     extern char **environ;
     for (char **env = environ; *env; env++) {
@@ -90,17 +88,28 @@ int main(int argc, char **argv) {
             if (eq) {
                 *eq = '\0';
                 char *val = eq + 1;
-                scope_define(super_global_scope, name, TOK_STRING, val_string(val));
+
+                // Interpretar prefijo de tipo (i:, f:, b:, s:)
+                if (val[0] == 'i' && val[1] == ':') {
+                    scope_define(super_global_scope, name, TOK_INT, val_int(atoi(val + 2)));
+                } else if (val[0] == 'f' && val[1] == ':') {
+                    scope_define(super_global_scope, name, TOK_FLOAT, val_float(atof(val + 2)));
+                } else if (val[0] == 'b' && val[1] == ':') {
+                    bool b = (strcmp(val + 2, "true") == 0);
+                    scope_define(super_global_scope, name, TOK_BOOL, val_bool(b));
+                } else if (val[0] == 's' && val[1] == ':') {
+                    scope_define(super_global_scope, name, TOK_STRING, val_string(val + 2));
+                } else {
+                    // Compatibilidad: sin prefijo se asume string
+                    scope_define(super_global_scope, name, TOK_STRING, val_string(val));
+                }
             }
             free(line);
         }
-    }
-
+    }                                     
     global_scope = scope_new(super_global_scope);
-    current_scope = global_scope;
-
-    register_all_builtins();
-
+    current_scope = global_scope;         
+    register_all_builtins();              
     FILE *fp = fopen(argv[1], "r");
     if (!fp) {
         perror("Error al abrir script");
@@ -110,9 +119,8 @@ int main(int argc, char **argv) {
 
     if (!setjmp(exception_env)) {
         ts_init();
-        tokenize_file(fp);
+        tokenize_file(fp);                        
         fclose(fp);
-
         NodeList program = parse_block(NULL);
 
         // Bucle principal con soporte para repeat line
@@ -128,7 +136,7 @@ int main(int argc, char **argv) {
                         found = j;
                         break;
                     }
-                }
+                }                                         
                 if (found != -1) {
                     start_index = found;
                 } else {
@@ -137,13 +145,13 @@ int main(int argc, char **argv) {
             }
         } while (control_flow == CF_REPEAT_LINE);
 
-        cleanup_embedded_temp_dir();
+        cleanup_embedded_temp_dir();              
         free(script_dir);
-        return 0;
-    } else {
-        fprintf(stderr, "%s\n", exception_msg);
+        return 0;                             
+    } else {                                      
+        fprintf(stderr, "%s\n", exception_msg);                                             
         cleanup_embedded_temp_dir();
-        free(script_dir);
-        return 1;
+        free(script_dir);                         
+        return 1;                             
     }
 }

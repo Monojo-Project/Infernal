@@ -484,30 +484,42 @@ void exec_block_from(NodeList *block, int start_index) {
                     if (!stmt->data.assign.is_cmd && stmt->data.assign.value &&
                         stmt->data.assign.value->kind == NODE_VAR) {
                         const char *src_name = stmt->data.assign.value->data.var.name;
-                    if (src_name[0] == '$') src_name++;
-                    VarEntry *src_var = scope_find(current_scope, src_name);
+                        if (src_name[0] == '$') src_name++;
+                        VarEntry *src_var = scope_find(current_scope, src_name);
                         if (src_var && src_var->vtype != 0) {
                             vtype = src_var->vtype;
                         } else {
                             vtype = valtype_to_tokentype(val.type);
                         }
-                        } else {
-                            vtype = valtype_to_tokentype(val.type);
-                        }
-                        if (vtype == 0) vtype = TOK_STRING;
+                    } else {
+                        vtype = valtype_to_tokentype(val.type);
+                    }
+                    if (vtype == 0) vtype = TOK_STRING;
                 }
 
+                // ────────────────────────────────────────────────
+                // MODIFICACIÓN: exportar con prefijo de tipo
+                // ────────────────────────────────────────────────
                 if (stmt->data.assign.is_global) {
                     scope_define(super_global_scope, stmt->data.assign.name, vtype, val);
                     char env_name[512];
                     snprintf(env_name, sizeof(env_name), "INFERNAL_VAR_%s", stmt->data.assign.name);
                     char *str_val = NULL;
                     switch (val.type) {
-                        case VAL_INT: asprintf(&str_val, "%d", val.data.ival); break;
-                        case VAL_FLOAT: asprintf(&str_val, "%g", val.data.fval); break;
-                        case VAL_BOOL: str_val = strdup(val.data.bval ? "true" : "false"); break;
-                        case VAL_STRING: str_val = strdup(val.data.sval); break;
-                        default: str_val = strdup("");
+                        case VAL_INT:
+                            asprintf(&str_val, "i:%d", val.data.ival);
+                            break;
+                        case VAL_FLOAT:
+                            asprintf(&str_val, "f:%g", val.data.fval);
+                            break;
+                        case VAL_BOOL:
+                            asprintf(&str_val, "b:%s", val.data.bval ? "true" : "false");
+                            break;
+                        case VAL_STRING:
+                            asprintf(&str_val, "s:%s", val.data.sval);
+                            break;
+                        default:
+                            str_val = strdup("s:");
                     }
                     setenv(env_name, str_val, 1);
                     free(str_val);
