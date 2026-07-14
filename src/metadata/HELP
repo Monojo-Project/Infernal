@@ -6,7 +6,8 @@ Uso:
 Opciones:
   --help       Muestra esta ayuda.
   --version    Muestra la versión del intérprete.
+  --edition    Muestra la edición del intérprete.
 
 Sin argumentos muestra el mensaje de bienvenida.
 
-Para más información visita: https://github.com/Monojo-Project/Infernal
+Documentación: https://github.com/Monojo-Project/Infernal-Documentation

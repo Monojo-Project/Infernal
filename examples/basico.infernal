@@ -1,0 +1,10 @@
+# Variables, listas, funciones y control de flujo.
+list nombres = ["Ada", "Linus"]
+
+function saludar(string nombre)
+    return "Hola, " + nombre
+fi
+
+for nombre in nombres then
+    print(saludar(nombre))
+fi
