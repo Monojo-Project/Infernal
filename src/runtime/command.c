@@ -22,6 +22,9 @@
 #include "runtime/globals.h"
 #include "stdlib/embedded.h"
 
+/* ─── Límite de seguridad para descompresión ─── */
+#define MAX_DECOMPRESSED_SIZE (500 * 1024 * 1024)  /* 500 MiB */
+
 static char *embedded_tmp_dir = NULL;
 
 void set_embedded_tmp_dir(const char *dir) {
@@ -86,10 +89,11 @@ char *expand_command(const char *cmd) {
     return realloc(result, len + 1);
 }
 
-/* ─── Descompresión usando libz cargada dinámicamente ─── */
+/* ─── Descompresión usando libz cargada dinámicamente (SEGURA) ─── */
 static unsigned char *gunzip_data(const unsigned char *compressed, size_t compressed_len, size_t *out_len) {
     static void *zlib_handle = NULL;
     static int zlib_available = -1;  // -1 = no verificado, 0 = no, 1 = sí
+    static const char *zlib_version_str = NULL;
 
     // Cargar libz si aún no se ha hecho
     if (zlib_available == -1) {
@@ -105,6 +109,10 @@ static unsigned char *gunzip_data(const unsigned char *compressed, size_t compre
                 zlib_handle = NULL;
                 zlib_available = 0;
             } else {
+                // Obtener versión real de zlib
+                typedef const char *(*zlibVersion_t)(void);
+                zlibVersion_t p_zlibVersion = (zlibVersion_t)dlsym(zlib_handle, "zlibVersion");
+                zlib_version_str = p_zlibVersion ? p_zlibVersion() : "1.2.0";
                 zlib_available = 1;
             }
         }
@@ -150,10 +158,13 @@ static unsigned char *gunzip_data(const unsigned char *compressed, size_t compre
     #define MAX_WBITS       15
 
     z_stream strm = {0};
-    if (p_inflateInit2(&strm, 16 + MAX_WBITS, "1.2.13", sizeof(strm)) != Z_OK)
+    if (p_inflateInit2(&strm, 16 + MAX_WBITS, zlib_version_str, sizeof(strm)) != Z_OK) {
+        fprintf(stderr, "Error: no se pudo inicializar la descompresión zlib (versión %s)\n", zlib_version_str);
         return NULL;
+    }
 
     size_t buf_size = compressed_len * 4 + 1024;
+    if (buf_size > MAX_DECOMPRESSED_SIZE) buf_size = MAX_DECOMPRESSED_SIZE;
     unsigned char *out = malloc(buf_size);
     if (!out) { p_inflateEnd(&strm); return NULL; }
 
@@ -169,8 +180,22 @@ static unsigned char *gunzip_data(const unsigned char *compressed, size_t compre
             p_inflateEnd(&strm);
             return NULL;
         }
+
+        // Verificar límite de descompresión (DoS) usando bytes reales descomprimidos
+        if (strm.total_out >= MAX_DECOMPRESSED_SIZE) {
+            fprintf(stderr, "Error: el binario descomprimido excede el límite de %zu bytes\n",
+                    (size_t)MAX_DECOMPRESSED_SIZE);
+            free(out);
+            p_inflateEnd(&strm);
+            return NULL;
+        }
+
         size_t used = strm.next_out - out;
-        buf_size *= 2;
+        size_t new_size = buf_size * 2;
+        if (new_size > MAX_DECOMPRESSED_SIZE)
+            new_size = MAX_DECOMPRESSED_SIZE;
+        buf_size = new_size;
+
         unsigned char *tmp = realloc(out, buf_size);
         if (!tmp) { free(out); p_inflateEnd(&strm); return NULL; }
         out = tmp;
