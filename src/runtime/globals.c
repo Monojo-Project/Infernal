@@ -12,7 +12,7 @@ Scope *current_scope = NULL;
 
 FuncEntry *func_table = NULL;
 char *current_import_prefix = NULL;
-int max_loop_iterations = 10000;
+int max_loop_iterations = 10000; // MODIFICA ESTO si quieres cambiar el límite de iteraciones en bucles
 
 jmp_buf exception_env;
 int exception_raised = 0;
