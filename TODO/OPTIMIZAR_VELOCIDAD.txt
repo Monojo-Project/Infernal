@@ -33,3 +33,11 @@ sys     0m0.562s
 real    1m39.843s
 user    1m7.595s
 sys     0m28.744s
+
+
+El codigo en todos es lo mismo, hace esto (pero en su sintaxis correcta):
+i = 0
+while i <= 10000000 then
+    i = i + 1
+fi
+print(1)
