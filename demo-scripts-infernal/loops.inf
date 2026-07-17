@@ -1,6 +1,0 @@
-i = 0
-while i <= 100000000 then
-    i = i + 1
-fi
-
-print(i)
