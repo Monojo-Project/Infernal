@@ -24,7 +24,7 @@ static struct { const char *name; VmBuiltin func; } builtin_names[256];
 static int builtin_names_count = 0;
 
 int vm_register_global(const char *name, Value val) {
-    (void)name;   // el nombre no se almacena en esta versión simple
+    (void)name;
     if (vm_global_count >= MAX_GLOBALS) return -1;
     vm_globals[vm_global_count] = val;
     return vm_global_count++;
@@ -48,7 +48,7 @@ int vm_find_builtin_index(const char *name) {
 
 int vm_find_global_index(const char *name) {
     (void)name;
-    return -1; // no implementado en este ejemplo
+    return -1;
 }
 
 static int call_builtin(int index, int arg_count) {
@@ -74,7 +74,6 @@ Value vm_run(Chunk *chunk) {
     if (!chunk || chunk->code_count == 0) return val_make_null();
 
     Value locals[256];
-    (void)locals; // usado en OP_LOAD_VAR / OP_STORE_VAR
     Instruction *ip = chunk->code;
 
 #ifdef USE_COMPUTED_GOTO
@@ -109,14 +108,14 @@ Value vm_run(Chunk *chunk) {
     OP_PUSH_NULL:   push(val_make_null()); ip++; DISPATCH();
 
     OP_LOAD_VAR:    push(locals[ip->operand]); ip++; DISPATCH();
-    OP_STORE_VAR:   locals[ip->operand] = peek(0); ip++; DISPATCH();
+    OP_STORE_VAR:   locals[ip->operand] = pop(); ip++; DISPATCH();   // <-- ahora hace pop
 
     OP_LOAD_GLOBAL:
         if (ip->operand < vm_global_count) push(vm_globals[ip->operand]);
         else error(0, "Acceso a global inválido");
         ip++; DISPATCH();
     OP_STORE_GLOBAL:
-        if (ip->operand < vm_global_count) vm_globals[ip->operand] = peek(0);
+        if (ip->operand < vm_global_count) vm_globals[ip->operand] = pop();  // <-- pop
         else error(0, "Global inválido");
         ip++; DISPATCH();
 
@@ -262,9 +261,12 @@ Value vm_run(Chunk *chunk) {
         ip++; DISPATCH();
     }
 
-    OP_CALL_BUILTIN:
-        if (!call_builtin(ip->operand, 0)) error(0, "Error en builtin");
+    OP_CALL_BUILTIN: {
+        int builtin_idx = ip->operand;
+        int arg_count = ip->operand2;               // <-- leer operand2
+        if (!call_builtin(builtin_idx, arg_count)) error(0, "Error en builtin");
         ip++; DISPATCH();
+    }
 
     OP_CALL_USER:
         error(0, "Funciones de usuario no soportadas aún en esta VM demo");
@@ -316,7 +318,6 @@ Value vm_run(Chunk *chunk) {
         ip++; DISPATCH();
     }
     OP_INDEX_ASSIGN:
-        // No implementado aún
         error(0, "Asignación con índice no implementada en VM demo");
         ip++; DISPATCH();
 
@@ -343,7 +344,7 @@ Value vm_run(Chunk *chunk) {
         ip++; DISPATCH();
 
 #ifdef USE_COMPUTED_GOTO
-    // Las etiquetas están a nivel de función, no hay que cerrar ningún bloque.
+    // etiquetas a nivel de función
 #else
     }   // fin del switch
     }   // fin del for(;;)

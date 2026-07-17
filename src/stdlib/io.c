@@ -10,6 +10,7 @@
 #include "runtime/scope.h"
 #include "runtime/globals.h"
 #include "runtime/error.h"
+#include "vm/vm.h"
 
 static Value builtin_printAllVars(int argc, Value *args) {
     (void)argc; (void)args;
@@ -75,7 +76,6 @@ static Value builtin_vartype(int argc, Value *args) {
         case VAL_NULL:   t = "null";   break;
         default:         t = "unknown";
     }
-    // Devolvemos el tipo como cadena (ya no imprime directamente)
     return val_string(t);
 }
 
@@ -96,7 +96,13 @@ static Value builtin_input(int argc, Value *args) {
 }
 
 void register_io_builtins(void) {
+    /* tabla antigua (parser) */
     func_register_builtin("printAllVars", builtin_printAllVars);
     func_register_builtin("vartype", builtin_vartype);
     func_register_builtin("input", builtin_input);
+
+    /* tabla de la VM (ejecución) */
+    vm_register_builtin("printAllVars", builtin_printAllVars);
+    vm_register_builtin("vartype", builtin_vartype);
+    vm_register_builtin("input", builtin_input);
 }

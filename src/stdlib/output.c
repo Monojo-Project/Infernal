@@ -6,7 +6,8 @@
 #include <stdio.h>
 #include "output.h"
 #include "core/value.h"
-#include "vm/vm.h"               // <-- añadido
+#include "runtime/globals.h"   // necesario para func_register_builtin
+#include "vm/vm.h"             // necesario para vm_register_builtin
 
 static void print_value(Value v) {
     switch (v.type) {
@@ -60,6 +61,13 @@ static Value builtin_success(int argc, Value *args) {
 }
 
 void register_output_builtins(void) {
+    /* registrar en la tabla antigua para el parser */
+    func_register_builtin("print", builtin_print);
+    func_register_builtin("warn", builtin_warn);
+    func_register_builtin("error", builtin_error);
+    func_register_builtin("success", builtin_success);
+
+    /* registrar en la VM para la ejecución */
     vm_register_builtin("print", builtin_print);
     vm_register_builtin("warn", builtin_warn);
     vm_register_builtin("error", builtin_error);

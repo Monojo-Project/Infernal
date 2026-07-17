@@ -44,7 +44,9 @@ static void emit(Chunk *ch, OpCode op, int operand) {
         ch->code_cap = ch->code_cap == 0 ? 256 : ch->code_cap * 2;
         ch->code = realloc(ch->code, ch->code_cap * sizeof(Instruction));
     }
-    ch->code[ch->code_count] = (Instruction){op, operand};
+    ch->code[ch->code_count].op = op;
+    ch->code[ch->code_count].operand = operand;
+    ch->code[ch->code_count].operand2 = 0;       // por defecto
     ch->code_count++;
 }
 
@@ -90,7 +92,7 @@ static void compile_expr(Compiler *c, ASTNode *expr) {
             compile_expr(c, expr->data.binop.left);
             emit(c->chunk, OP_DUP, 0);
             int jump = emit_jump(c->chunk, OP_JUMP_IF_FALSE);
-            emit(c->chunk, OP_POP, 0);               // descartar el true duplicado
+            emit(c->chunk, OP_POP, 0);
             compile_expr(c, expr->data.binop.right);
             patch_jump(c->chunk, jump, c->chunk->code_count);
         } else {
@@ -114,11 +116,15 @@ static void compile_expr(Compiler *c, ASTNode *expr) {
         break;
     }
     case NODE_CALL: {
+        // Compilar argumentos
         for (int i = 0; i < expr->data.call.argc; i++)
             compile_expr(c, expr->data.call.args[i]);
-        int idx = vm_find_builtin_index(expr->data.call.name);
-        if (idx < 0) error(expr->line, "Función no encontrada: %s", expr->data.call.name);
-        emit(c->chunk, OP_CALL_BUILTIN, idx);
+        int builtin_idx = vm_find_builtin_index(expr->data.call.name);
+        if (builtin_idx < 0) error(expr->line, "Función no encontrada: %s", expr->data.call.name);
+        // Emitir CALL_BUILTIN y guardar la posición para ajustar operand2
+        int call_pos = c->chunk->code_count;  // siguiente instrucción
+        emit(c->chunk, OP_CALL_BUILTIN, builtin_idx);
+        c->chunk->code[call_pos].operand2 = expr->data.call.argc;  // fijar nº de argumentos
         break;
     }
     case NODE_LIST:
@@ -149,7 +155,6 @@ static void compile_stmt(Compiler *c, ASTNode *stmt) {
         const char *name = stmt->data.assign.name;
         int slot = resolve_local(c, name);
         if (slot < 0) {
-            // auto-declarar como local
             slot = add_local(c, name);
         }
         if (stmt->data.assign.is_cmd) {
@@ -213,6 +218,6 @@ Chunk *compile_program(NodeList *program) {
     c.local_count = 0;
 
     compile_block(&c, program);
-    emit(c.chunk, OP_RETURN, 0);   // retorno final
+    emit(c.chunk, OP_RETURN, 0);
     return c.chunk;
 }

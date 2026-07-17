@@ -10,7 +10,7 @@
 #include "core/value.h"
 #include "runtime/globals.h"
 #include "runtime/error.h"
-#include "vm/vm.h"               // <-- añadido
+#include "vm/vm.h"
 
 static Value builtin_exit(int argc, Value *args) {
     int code = 0;
@@ -51,6 +51,14 @@ static Value builtin_lower(int argc, Value *args) {
 }
 
 void register_system_builtins(void) {
+    /* parser */
+    func_register_builtin("exit", builtin_exit);
+    func_register_builtin("setlooplimit", builtin_setlooplimit);
+    func_register_builtin("getlooplimit", builtin_getlooplimit);
+    func_register_builtin("here", builtin_here);
+    func_register_builtin("lower", builtin_lower);
+
+    /* VM */
     vm_register_builtin("exit", builtin_exit);
     vm_register_builtin("setlooplimit", builtin_setlooplimit);
     vm_register_builtin("getlooplimit", builtin_getlooplimit);
