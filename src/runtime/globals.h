@@ -7,6 +7,7 @@
 
 #include "core/types.h"
 #include "runtime/scope.h"
+#include "vm/vm.h"
 
 // Control flow constants
 #define CF_NONE        0

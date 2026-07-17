@@ -1,0 +1,352 @@
+#include "vm.h"
+#include "core/value.h"
+#include "runtime/command.h"
+#include "runtime/error.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define STACK_MAX 4096
+Value stack[STACK_MAX];
+static Value *sp = stack;
+
+static inline void push(Value v) { *sp++ = v; }
+static inline Value pop(void)  { return *--sp; }
+static inline Value peek(int dist) { return *(sp - 1 - dist); }
+
+Value vm_globals[MAX_GLOBALS];
+int vm_global_count = 0;
+
+VmBuiltin vm_builtins[256];
+int vm_builtin_count = 0;
+
+static struct { const char *name; VmBuiltin func; } builtin_names[256];
+static int builtin_names_count = 0;
+
+int vm_register_global(const char *name, Value val) {
+    (void)name;   // el nombre no se almacena en esta versión simple
+    if (vm_global_count >= MAX_GLOBALS) return -1;
+    vm_globals[vm_global_count] = val;
+    return vm_global_count++;
+}
+
+int vm_register_builtin(const char *name, VmBuiltin func) {
+    if (vm_builtin_count >= 256) return -1;
+    builtin_names[builtin_names_count].name = name;
+    builtin_names[builtin_names_count].func = func;
+    builtin_names_count++;
+    vm_builtins[vm_builtin_count] = func;
+    return vm_builtin_count++;
+}
+
+int vm_find_builtin_index(const char *name) {
+    for (int i = 0; i < builtin_names_count; i++)
+        if (strcmp(builtin_names[i].name, name) == 0)
+            return i;
+    return -1;
+}
+
+int vm_find_global_index(const char *name) {
+    (void)name;
+    return -1; // no implementado en este ejemplo
+}
+
+static int call_builtin(int index, int arg_count) {
+    if (index >= vm_builtin_count) error(0, "Índice de builtin inválido");
+    Value *args = sp - arg_count;
+    Value ret = vm_builtins[index](arg_count, args);
+    sp -= arg_count;               // retirar argumentos de la pila
+    push(ret);
+    return 1;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+#define USE_COMPUTED_GOTO 1
+#endif
+
+#ifdef USE_COMPUTED_GOTO
+#define DISPATCH() goto *dispatch_table[ip->op]
+#else
+#define DISPATCH() switch(ip->op)
+#endif
+
+Value vm_run(Chunk *chunk) {
+    if (!chunk || chunk->code_count == 0) return val_make_null();
+
+    Value locals[256];
+    (void)locals; // usado en OP_LOAD_VAR / OP_STORE_VAR
+    Instruction *ip = chunk->code;
+
+#ifdef USE_COMPUTED_GOTO
+    static void *dispatch_table[] = {
+        &&OP_NOP, &&OP_PUSH_INT, &&OP_PUSH_FLOAT, &&OP_PUSH_STRING, &&OP_PUSH_BOOL, &&OP_PUSH_NULL,
+        &&OP_LOAD_VAR, &&OP_STORE_VAR,
+        &&OP_LOAD_GLOBAL, &&OP_STORE_GLOBAL,
+        &&OP_ADD, &&OP_SUB, &&OP_MUL, &&OP_DIV, &&OP_MOD,
+        &&OP_NEG,
+        &&OP_EQ, &&OP_NEQ, &&OP_LT, &&OP_GT, &&OP_LE, &&OP_GE,
+        &&OP_AND, &&OP_OR, &&OP_NOT,
+        &&OP_CALL_BUILTIN, &&OP_CALL_USER,
+        &&OP_RETURN,
+        &&OP_JUMP_IF_FALSE, &&OP_JUMP,
+        &&OP_DUP, &&OP_POP,
+        &&OP_NEW_LIST, &&OP_LIST_APPEND,
+        &&OP_INDEX, &&OP_INDEX_ASSIGN,
+        &&OP_EMBEDDED_CMD, &&OP_SHELL_CMD, &&OP_FLAGS
+    };
+    DISPATCH();
+#else
+    for (;;) {
+        switch (ip->op) {
+#endif
+
+    OP_NOP: ip++; DISPATCH();
+
+    OP_PUSH_INT:    push(chunk->constants[ip->operand]); ip++; DISPATCH();
+    OP_PUSH_FLOAT:  push(chunk->constants[ip->operand]); ip++; DISPATCH();
+    OP_PUSH_STRING: push(chunk->constants[ip->operand]); ip++; DISPATCH();
+    OP_PUSH_BOOL:   push(chunk->constants[ip->operand]); ip++; DISPATCH();
+    OP_PUSH_NULL:   push(val_make_null()); ip++; DISPATCH();
+
+    OP_LOAD_VAR:    push(locals[ip->operand]); ip++; DISPATCH();
+    OP_STORE_VAR:   locals[ip->operand] = peek(0); ip++; DISPATCH();
+
+    OP_LOAD_GLOBAL:
+        if (ip->operand < vm_global_count) push(vm_globals[ip->operand]);
+        else error(0, "Acceso a global inválido");
+        ip++; DISPATCH();
+    OP_STORE_GLOBAL:
+        if (ip->operand < vm_global_count) vm_globals[ip->operand] = peek(0);
+        else error(0, "Global inválido");
+        ip++; DISPATCH();
+
+    OP_ADD: {
+        Value b = pop(), a = pop();
+        if (a.type == VAL_STRING || b.type == VAL_STRING) {
+            char buf[128];
+            const char *sa = (a.type == VAL_STRING) ? a.data.sval : (snprintf(buf, sizeof(buf), "%d", a.data.ival), buf);
+            const char *sb = (b.type == VAL_STRING) ? b.data.sval : (snprintf(buf, sizeof(buf), "%d", b.data.ival), buf);
+            char *cat = malloc(strlen(sa) + strlen(sb) + 1);
+            strcpy(cat, sa); strcat(cat, sb);
+            Value res = val_string(cat);
+            free(cat);
+            push(res);
+        } else if (a.type == VAL_INT && b.type == VAL_INT) {
+            push(val_int(a.data.ival + b.data.ival));
+        } else {
+            double av = (a.type == VAL_INT) ? a.data.ival : a.data.fval;
+            double bv = (b.type == VAL_INT) ? b.data.ival : b.data.fval;
+            push(val_float(av + bv));
+        }
+        ip++; DISPATCH();
+    }
+    OP_SUB: {
+        Value b = pop(), a = pop();
+        if (a.type == VAL_INT && b.type == VAL_INT) push(val_int(a.data.ival - b.data.ival));
+        else push(val_float((a.type==VAL_INT?a.data.ival:a.data.fval) - (b.type==VAL_INT?b.data.ival:b.data.fval)));
+        ip++; DISPATCH();
+    }
+    OP_MUL: {
+        Value b = pop(), a = pop();
+        if (a.type == VAL_INT && b.type == VAL_INT) push(val_int(a.data.ival * b.data.ival));
+        else push(val_float((a.type==VAL_INT?a.data.ival:a.data.fval) * (b.type==VAL_INT?b.data.ival:b.data.fval)));
+        ip++; DISPATCH();
+    }
+    OP_DIV: {
+        Value b = pop(), a = pop();
+        double av = (a.type==VAL_INT) ? a.data.ival : a.data.fval;
+        double bv = (b.type==VAL_INT) ? b.data.ival : b.data.fval;
+        if (bv == 0) error(0, "División por cero");
+        push(val_float(av / bv));
+        ip++; DISPATCH();
+    }
+    OP_MOD: {
+        Value b = pop(), a = pop();
+        if (a.type == VAL_INT && b.type == VAL_INT) {
+            if (b.data.ival == 0) error(0, "Módulo por cero");
+            push(val_int(a.data.ival % b.data.ival));
+        } else error(0, "Módulo sólo para enteros");
+        ip++; DISPATCH();
+    }
+    OP_NEG: {
+        Value v = pop();
+        if (v.type == VAL_INT) push(val_int(-v.data.ival));
+        else if (v.type == VAL_FLOAT) push(val_float(-v.data.fval));
+        else error(0, "Negación no aplicable");
+        ip++; DISPATCH();
+    }
+
+    OP_EQ: {
+        Value b = pop(), a = pop();
+        int eq = 0;
+        if (a.type == b.type) {
+            switch (a.type) {
+                case VAL_INT: eq = (a.data.ival == b.data.ival); break;
+                case VAL_FLOAT: eq = (a.data.fval == b.data.fval); break;
+                case VAL_BOOL: eq = (a.data.bval == b.data.bval); break;
+                case VAL_STRING: eq = (strcmp(a.data.sval, b.data.sval) == 0); break;
+                default: eq = 0;
+            }
+        }
+        push(val_bool(eq));
+        ip++; DISPATCH();
+    }
+    OP_NEQ: {
+        Value b = pop(), a = pop();
+        int neq = 1;
+        if (a.type == b.type) {
+            switch (a.type) {
+                case VAL_INT: neq = (a.data.ival != b.data.ival); break;
+                case VAL_FLOAT: neq = (a.data.fval != b.data.fval); break;
+                case VAL_BOOL: neq = (a.data.bval != b.data.bval); break;
+                case VAL_STRING: neq = (strcmp(a.data.sval, b.data.sval) != 0); break;
+                default: neq = 1;
+            }
+        }
+        push(val_bool(neq));
+        ip++; DISPATCH();
+    }
+    OP_LT: {
+        Value b = pop(), a = pop();
+        double av = (a.type==VAL_INT) ? a.data.ival : a.data.fval;
+        double bv = (b.type==VAL_INT) ? b.data.ival : b.data.fval;
+        push(val_bool(av < bv));
+        ip++; DISPATCH();
+    }
+    OP_GT: {
+        Value b = pop(), a = pop();
+        double av = (a.type==VAL_INT) ? a.data.ival : a.data.fval;
+        double bv = (b.type==VAL_INT) ? b.data.ival : b.data.fval;
+        push(val_bool(av > bv));
+        ip++; DISPATCH();
+    }
+    OP_LE: {
+        Value b = pop(), a = pop();
+        double av = (a.type==VAL_INT) ? a.data.ival : a.data.fval;
+        double bv = (b.type==VAL_INT) ? b.data.ival : b.data.fval;
+        push(val_bool(av <= bv));
+        ip++; DISPATCH();
+    }
+    OP_GE: {
+        Value b = pop(), a = pop();
+        double av = (a.type==VAL_INT) ? a.data.ival : a.data.fval;
+        double bv = (b.type==VAL_INT) ? b.data.ival : b.data.fval;
+        push(val_bool(av >= bv));
+        ip++; DISPATCH();
+    }
+
+    OP_AND: {
+        Value b = pop(), a = pop();
+        int truthy_a = (a.type == VAL_BOOL && a.data.bval) || (a.type == VAL_INT && a.data.ival != 0) || (a.type == VAL_FLOAT && a.data.fval != 0.0) || (a.type == VAL_STRING && a.data.sval[0]);
+        if (!truthy_a) push(val_bool(0));
+        else {
+            int truthy_b = (b.type == VAL_BOOL && b.data.bval) || (b.type == VAL_INT && b.data.ival != 0) || (b.type == VAL_FLOAT && b.data.fval != 0.0) || (b.type == VAL_STRING && b.data.sval[0]);
+            push(val_bool(truthy_b));
+        }
+        ip++; DISPATCH();
+    }
+    OP_OR: {
+        Value b = pop(), a = pop();
+        int truthy_a = (a.type == VAL_BOOL && a.data.bval) || (a.type == VAL_INT && a.data.ival != 0) || (a.type == VAL_FLOAT && a.data.fval != 0.0) || (a.type == VAL_STRING && a.data.sval[0]);
+        if (truthy_a) push(val_bool(1));
+        else {
+            int truthy_b = (b.type == VAL_BOOL && b.data.bval) || (b.type == VAL_INT && b.data.ival != 0) || (b.type == VAL_FLOAT && b.data.fval != 0.0) || (b.type == VAL_STRING && b.data.sval[0]);
+            push(val_bool(truthy_b));
+        }
+        ip++; DISPATCH();
+    }
+    OP_NOT: {
+        Value v = pop();
+        int truthy = (v.type == VAL_BOOL && v.data.bval) || (v.type == VAL_INT && v.data.ival != 0) || (v.type == VAL_FLOAT && v.data.fval != 0.0) || (v.type == VAL_STRING && v.data.sval[0]);
+        push(val_bool(!truthy));
+        ip++; DISPATCH();
+    }
+
+    OP_CALL_BUILTIN:
+        if (!call_builtin(ip->operand, 0)) error(0, "Error en builtin");
+        ip++; DISPATCH();
+
+    OP_CALL_USER:
+        error(0, "Funciones de usuario no soportadas aún en esta VM demo");
+        ip++; DISPATCH();
+
+    OP_RETURN: {
+        Value ret = peek(0);
+        return ret;
+    }
+
+    OP_JUMP_IF_FALSE: {
+        Value v = pop();
+        int truthy = (v.type == VAL_BOOL && v.data.bval) || (v.type == VAL_INT && v.data.ival != 0) || (v.type == VAL_FLOAT && v.data.fval != 0.0) || (v.type == VAL_STRING && v.data.sval[0]);
+        if (!truthy) ip += ip->operand;
+        else ip++;
+        DISPATCH();
+    }
+    OP_JUMP:
+        ip += ip->operand;
+        DISPATCH();
+
+    OP_DUP:  push(peek(0)); ip++; DISPATCH();
+    OP_POP:  pop(); ip++; DISPATCH();
+
+    OP_NEW_LIST:   push(val_list_empty()); ip++; DISPATCH();
+    OP_LIST_APPEND: {
+        Value item = pop();
+        Value *list = sp - 1;
+        val_list_append(list, item);
+        ip++; DISPATCH();
+    }
+
+    OP_INDEX: {
+        Value idx = pop();
+        Value base = pop();
+        if (base.type == VAL_LIST) {
+            if (idx.type != VAL_INT) error(0, "Índice de lista debe ser entero");
+            int i = idx.data.ival;
+            if (i < 1 || i > base.data.list.count) error(0, "Índice fuera de rango");
+            push(base.data.list.items[i-1]);
+        } else if (base.type == VAL_STRING) {
+            if (idx.type != VAL_INT) error(0, "Índice de string debe ser entero");
+            int i = idx.data.ival;
+            size_t len = strlen(base.data.sval);
+            if (i < 1 || (size_t)i > len) error(0, "Índice fuera de rango");
+            char c[2] = {base.data.sval[i-1], 0};
+            push(val_string(c));
+        } else error(0, "Indexación no soportada");
+        ip++; DISPATCH();
+    }
+    OP_INDEX_ASSIGN:
+        // No implementado aún
+        error(0, "Asignación con índice no implementada en VM demo");
+        ip++; DISPATCH();
+
+    OP_EMBEDDED_CMD: {
+        Value cmd_val = chunk->constants[ip->operand];
+        const char *cmd = cmd_val.data.sval;
+        char *expanded = expand_command(cmd);
+        int ret = execute_embedded(expanded);
+        if (ret == -1) error(0, "Comando embebido falló");
+        free(expanded);
+        ip++; DISPATCH();
+    }
+    OP_SHELL_CMD: {
+        Value cmd_val = chunk->constants[ip->operand];
+        const char *cmd = cmd_val.data.sval;
+        char *expanded = expand_command(cmd);
+        int ret = system(expanded);
+        if (ret != 0) error(0, "Comando shell falló");
+        free(expanded);
+        ip++; DISPATCH();
+    }
+    OP_FLAGS:
+        error(0, "flags no soportados en VM demo");
+        ip++; DISPATCH();
+
+#ifdef USE_COMPUTED_GOTO
+    // Las etiquetas están a nivel de función, no hay que cerrar ningún bloque.
+#else
+    }   // fin del switch
+    }   // fin del for(;;)
+#endif
+    return val_make_null();
+}

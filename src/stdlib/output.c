@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include "output.h"
 #include "core/value.h"
-#include "runtime/globals.h"
+#include "vm/vm.h"               // <-- añadido
 
 static void print_value(Value v) {
     switch (v.type) {
@@ -39,7 +39,7 @@ static Value builtin_warn(int argc, Value *args) {
     printf("\033[33m");
     builtin_print(argc, args);
     printf("\033[0m");
-    fflush(stdout);   // ← Añadido para forzar el reinicio del color
+    fflush(stdout);
     return val_make_null();
 }
 
@@ -47,7 +47,7 @@ static Value builtin_error(int argc, Value *args) {
     printf("\033[31m");
     builtin_print(argc, args);
     printf("\033[0m");
-    fflush(stdout);   // ← Añadido por lo mismo
+    fflush(stdout);
     return val_make_null();
 }
 
@@ -55,13 +55,13 @@ static Value builtin_success(int argc, Value *args) {
     printf("\033[32m");
     builtin_print(argc, args);
     printf("\033[0m");
-    fflush(stdout);   // ← Añadido por lo mismo
+    fflush(stdout);
     return val_make_null();
 }
 
 void register_output_builtins(void) {
-    func_register_builtin("print", builtin_print);
-    func_register_builtin("warn", builtin_warn);
-    func_register_builtin("error", builtin_error);
-    func_register_builtin("success", builtin_success);
+    vm_register_builtin("print", builtin_print);
+    vm_register_builtin("warn", builtin_warn);
+    vm_register_builtin("error", builtin_error);
+    vm_register_builtin("success", builtin_success);
 }

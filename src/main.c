@@ -1,6 +1,6 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
- * Código fuente de Infernal: main.c
+ * Código fuente de Infernal: main.c (versión con VM de bytecode)
  */
 
 #include <stdio.h>
@@ -13,9 +13,11 @@
 #include "parser/parser.h"
 #include "runtime/scope.h"
 #include "runtime/globals.h"
-#include "runtime/evaluator.h"
+#include "runtime/error.h"
 #include "runtime/command.h"
 #include "stdlib/builtins.h"
+#include "vm/vm.h"
+#include "vm/compiler.h"
 
 extern const char* get_metadata(const char *type);
 
@@ -49,35 +51,35 @@ int main(int argc, char **argv) {
     }
 
     script_argc = argc;
-    script_argv = argv;                   
-    // Directorio del script para temporales y here()
+    script_argv = argv;
+
     char *script_path = realpath(argv[1], NULL);
-    if (script_path) {                            
+    if (script_path) {
         char *dir = strdup(script_path);
         char *last_slash = strrchr(dir, '/');
         if (last_slash) {
-            *last_slash = '\0';                       
+            *last_slash = '\0';
             set_embedded_tmp_dir(dir);
-            script_dir = strdup(dir);   // <-- guardar ruta del script
-        } else {                                      
+            script_dir = strdup(dir);
+        } else {
             char cwd[PATH_MAX];
-            if (getcwd(cwd, sizeof(cwd)) != NULL) {                                                 
-                set_embedded_tmp_dir(cwd);                
+            if (getcwd(cwd, sizeof(cwd)) != NULL) {
+                set_embedded_tmp_dir(cwd);
                 script_dir = strdup(cwd);
-            }                                     
+            }
         }
-        free(dir);                                
+        free(dir);
         free(script_path);
     } else {
         char cwd[PATH_MAX];
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
-            set_embedded_tmp_dir(cwd);                
+            set_embedded_tmp_dir(cwd);
             script_dir = strdup(cwd);
         }
-    }                                     
-    // Guardar el nombre del archivo principal para los mensajes de error               
+    }
+
     current_source_file = argv[1];
-                                              
+
     super_global_scope = scope_new(NULL);
     extern char **environ;
     for (char **env = environ; *env; env++) {
@@ -88,8 +90,6 @@ int main(int argc, char **argv) {
             if (eq) {
                 *eq = '\0';
                 char *val = eq + 1;
-
-                // Interpretar prefijo de tipo (i:, f:, b:, s:)
                 if (val[0] == 'i' && val[1] == ':') {
                     scope_define(super_global_scope, name, TOK_INT, val_int(atoi(val + 2)));
                 } else if (val[0] == 'f' && val[1] == ':') {
@@ -100,16 +100,19 @@ int main(int argc, char **argv) {
                 } else if (val[0] == 's' && val[1] == ':') {
                     scope_define(super_global_scope, name, TOK_STRING, val_string(val + 2));
                 } else {
-                    // Compatibilidad: sin prefijo se asume string
                     scope_define(super_global_scope, name, TOK_STRING, val_string(val));
                 }
             }
             free(line);
         }
-    }                                     
+    }
+
     global_scope = scope_new(super_global_scope);
-    current_scope = global_scope;         
-    register_all_builtins();              
+    current_scope = global_scope;
+
+    // Registrar builtins en la VM (no en la antigua tabla de funciones)
+    register_all_builtins();
+
     FILE *fp = fopen(argv[1], "r");
     if (!fp) {
         perror("Error al abrir script");
@@ -119,39 +122,25 @@ int main(int argc, char **argv) {
 
     if (!setjmp(exception_env)) {
         ts_init();
-        tokenize_file(fp);                        
+        tokenize_file(fp);
         fclose(fp);
+
         NodeList program = parse_block(NULL);
 
-        // Bucle principal con soporte para repeat line
-        int start_index = 0;
-        do {
-            control_flow = CF_NONE;
-            exec_block_from(&program, start_index);
-            if (control_flow == CF_REPEAT_LINE) {
-                int target = repeat_line_target;
-                int found = -1;
-                for (int j = 0; j < program.count; j++) {
-                    if (program.stmts[j]->line >= target) {
-                        found = j;
-                        break;
-                    }
-                }                                         
-                if (found != -1) {
-                    start_index = found;
-                } else {
-                    break; // línea no encontrada, salir
-                }
-            }
-        } while (control_flow == CF_REPEAT_LINE);
+        // Compilar a bytecode
+        Chunk *main_chunk = compile_program(&program);
 
-        cleanup_embedded_temp_dir();              
-        free(script_dir);
-        return 0;                             
-    } else {                                      
-        fprintf(stderr, "%s\n", exception_msg);                                             
+        // Ejecutar en la VM
+        Value result = vm_run(main_chunk);
+        (void)result; // descartar
+
         cleanup_embedded_temp_dir();
-        free(script_dir);                         
-        return 1;                             
+        free(script_dir);
+        return 0;
+    } else {
+        fprintf(stderr, "%s\n", exception_msg);
+        cleanup_embedded_temp_dir();
+        free(script_dir);
+        return 1;
     }
 }
