@@ -51,14 +51,12 @@ static Value builtin_lower(int argc, Value *args) {
 }
 
 void register_system_builtins(void) {
-    /* parser */
     func_register_builtin("exit", builtin_exit);
     func_register_builtin("setlooplimit", builtin_setlooplimit);
     func_register_builtin("getlooplimit", builtin_getlooplimit);
     func_register_builtin("here", builtin_here);
     func_register_builtin("lower", builtin_lower);
 
-    /* VM */
     vm_register_builtin("exit", builtin_exit);
     vm_register_builtin("setlooplimit", builtin_setlooplimit);
     vm_register_builtin("getlooplimit", builtin_getlooplimit);

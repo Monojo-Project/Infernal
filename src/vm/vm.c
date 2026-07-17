@@ -2,9 +2,14 @@
 #include "core/value.h"
 #include "runtime/command.h"
 #include "runtime/error.h"
+#include "runtime/scope.h"
+#include "runtime/evaluator.h"
+#include "runtime/globals.h"
+#include "core/ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define STACK_MAX 4096
 Value stack[STACK_MAX];
@@ -55,9 +60,26 @@ static int call_builtin(int index, int arg_count) {
     if (index >= vm_builtin_count) error(0, "Índice de builtin inválido");
     Value *args = sp - arg_count;
     Value ret = vm_builtins[index](arg_count, args);
-    sp -= arg_count;               // retirar argumentos de la pila
+    sp -= arg_count;
     push(ret);
     return 1;
+}
+
+/* ─── Expansión de variables usando las locales de la VM ─── */
+static char *expand_command_vm(Chunk *chunk, Value *locals, const char *cmd) {
+    Scope *temp_scope = scope_new(global_scope);
+    for (int i = 0; i < chunk->local_count; i++) {
+        if (chunk->local_names[i]) {
+            scope_define(temp_scope, chunk->local_names[i],
+                         valtype_to_tokentype(locals[i].type), locals[i]);
+        }
+    }
+    Scope *old_scope = current_scope;
+    current_scope = temp_scope;
+    char *expanded = expand_command(cmd);
+    current_scope = old_scope;
+    /* temp_scope se pierde intencionadamente (no tenemos scope_free) */
+    return expanded;
 }
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -69,6 +91,8 @@ static int call_builtin(int index, int arg_count) {
 #else
 #define DISPATCH() switch(ip->op)
 #endif
+
+extern Scope *global_scope;
 
 Value vm_run(Chunk *chunk) {
     if (!chunk || chunk->code_count == 0) return val_make_null();
@@ -91,7 +115,8 @@ Value vm_run(Chunk *chunk) {
         &&OP_DUP, &&OP_POP,
         &&OP_NEW_LIST, &&OP_LIST_APPEND,
         &&OP_INDEX, &&OP_INDEX_ASSIGN,
-        &&OP_EMBEDDED_CMD, &&OP_SHELL_CMD, &&OP_FLAGS
+        &&OP_EMBEDDED_CMD, &&OP_SHELL_CMD, &&OP_FLAGS,
+        &&OP_CMD_ASSIGN, &&OP_INTERPRET_NODE
     };
     DISPATCH();
 #else
@@ -108,14 +133,14 @@ Value vm_run(Chunk *chunk) {
     OP_PUSH_NULL:   push(val_make_null()); ip++; DISPATCH();
 
     OP_LOAD_VAR:    push(locals[ip->operand]); ip++; DISPATCH();
-    OP_STORE_VAR:   locals[ip->operand] = pop(); ip++; DISPATCH();   // <-- ahora hace pop
+    OP_STORE_VAR:   locals[ip->operand] = pop(); ip++; DISPATCH();
 
     OP_LOAD_GLOBAL:
         if (ip->operand < vm_global_count) push(vm_globals[ip->operand]);
         else error(0, "Acceso a global inválido");
         ip++; DISPATCH();
     OP_STORE_GLOBAL:
-        if (ip->operand < vm_global_count) vm_globals[ip->operand] = pop();  // <-- pop
+        if (ip->operand < vm_global_count) vm_globals[ip->operand] = pop();
         else error(0, "Global inválido");
         ip++; DISPATCH();
 
@@ -263,7 +288,7 @@ Value vm_run(Chunk *chunk) {
 
     OP_CALL_BUILTIN: {
         int builtin_idx = ip->operand;
-        int arg_count = ip->operand2;               // <-- leer operand2
+        int arg_count = ip->operand2;
         if (!call_builtin(builtin_idx, arg_count)) error(0, "Error en builtin");
         ip++; DISPATCH();
     }
@@ -324,7 +349,7 @@ Value vm_run(Chunk *chunk) {
     OP_EMBEDDED_CMD: {
         Value cmd_val = chunk->constants[ip->operand];
         const char *cmd = cmd_val.data.sval;
-        char *expanded = expand_command(cmd);
+        char *expanded = expand_command_vm(chunk, locals, cmd);
         int ret = execute_embedded(expanded);
         if (ret == -1) error(0, "Comando embebido falló");
         free(expanded);
@@ -333,7 +358,7 @@ Value vm_run(Chunk *chunk) {
     OP_SHELL_CMD: {
         Value cmd_val = chunk->constants[ip->operand];
         const char *cmd = cmd_val.data.sval;
-        char *expanded = expand_command(cmd);
+        char *expanded = expand_command_vm(chunk, locals, cmd);
         int ret = system(expanded);
         if (ret != 0) error(0, "Comando shell falló");
         free(expanded);
@@ -343,8 +368,74 @@ Value vm_run(Chunk *chunk) {
         error(0, "flags no soportados en VM demo");
         ip++; DISPATCH();
 
+    OP_CMD_ASSIGN: {
+        Value cmd_val = chunk->constants[ip->operand];
+        const char *cmd = cmd_val.data.sval;
+        char *expanded = expand_command_vm(chunk, locals, cmd);
+        FILE *fp = NULL;
+        char *temp_path = NULL;
+
+        size_t cmd_len = strlen(expanded);
+        if (cmd_len >= 2 && expanded[0] == '!' && expanded[cmd_len-1] == '!') {
+            char *trimmed = strdup(expanded + 1);
+            trimmed[strlen(trimmed)-1] = '\0';
+            fp = popen_embedded_with_path(trimmed, "r", &temp_path);
+            free(trimmed);
+        } else {
+            fp = popen(expanded, "r");
+        }
+        free(expanded);
+
+        if (!fp) error(0, "Error al ejecutar comando: %s", cmd);
+        char buf[4096]; char *out = strdup("");
+        while (fgets(buf, sizeof(buf), fp)) {
+            out = realloc(out, strlen(out) + strlen(buf) + 1);
+            strcat(out, buf);
+        }
+        int status = pclose(fp);
+        if (status != 0) error(0, "Comando falló: %s", cmd);
+
+        if (temp_path) {
+            unlink(temp_path);
+            free(temp_path);
+        }
+
+        size_t len = strlen(out);
+        if (len > 0 && out[len-1] == '\n') out[len-1] = '\0';
+        Value result = val_string(out);
+        free(out);
+
+        locals[ip->operand2] = result;
+        ip++; DISPATCH();
+    }
+
+    OP_INTERPRET_NODE: {
+        ASTNode *node = (ASTNode*)chunk->constants[ip->operand].data.ptr;
+        Scope *temp_scope = scope_new(global_scope);
+        for (int i = 0; i < chunk->local_count; i++) {
+            if (chunk->local_names[i]) {
+                scope_define(temp_scope, chunk->local_names[i],
+                             valtype_to_tokentype(locals[i].type), locals[i]);
+            }
+        }
+        Scope *old_scope = current_scope;
+        current_scope = temp_scope;
+        if (ip->operand2 == 0) {
+            NodeList block = { &node, 1, 1 };
+            exec_block(&block);
+        } else {
+            Value result = eval_expr(node);
+            push(result);
+        }
+        for (int i = 0; i < chunk->local_count; i++) {
+            VarEntry *var = scope_find(temp_scope, chunk->local_names[i]);
+            if (var) locals[i] = var->value;
+        }
+        current_scope = old_scope;
+        ip++; DISPATCH();
+    }
+
 #ifdef USE_COMPUTED_GOTO
-    // etiquetas a nivel de función
 #else
     }   // fin del switch
     }   // fin del for(;;)

@@ -69,6 +69,7 @@ typedef struct {
 #define VAL_STRING    4
 #define VAL_LIST      5
 #define VAL_REFERENCE 6
+#define VAL_PTR       7
 
 typedef struct Value Value;
 struct Value {
@@ -86,6 +87,7 @@ struct Value {
             char *list_name;
             int index;
         } ref;
+        void *ptr;
     } data;
 };
 

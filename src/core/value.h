@@ -18,5 +18,6 @@ void  val_list_append(Value *list, Value item);
 Value val_list_copy(Value *src);
 int   valtype_to_tokentype(int vtype);
 Value val_reference(const char *list_name, int index);
+Value val_ptr(void *ptr);
 
 #endif

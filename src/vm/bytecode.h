@@ -25,7 +25,9 @@ typedef enum {
     OP_INDEX_ASSIGN,
     OP_EMBEDDED_CMD,
     OP_SHELL_CMD,
-    OP_FLAGS
+    OP_FLAGS,
+    OP_CMD_ASSIGN,
+    OP_INTERPRET_NODE
 } OpCode;
 
 typedef struct {

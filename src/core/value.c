@@ -71,3 +71,10 @@ Value val_reference(const char *list_name, int index) {
     v.data.ref.index = index;
     return v;
 }
+
+Value val_ptr(void *ptr) {
+    Value v;
+    v.type = VAL_PTR;
+    v.data.ptr = ptr;
+    return v;
+}

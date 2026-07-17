@@ -96,12 +96,10 @@ static Value builtin_input(int argc, Value *args) {
 }
 
 void register_io_builtins(void) {
-    /* tabla antigua (parser) */
     func_register_builtin("printAllVars", builtin_printAllVars);
     func_register_builtin("vartype", builtin_vartype);
     func_register_builtin("input", builtin_input);
 
-    /* tabla de la VM (ejecución) */
     vm_register_builtin("printAllVars", builtin_printAllVars);
     vm_register_builtin("vartype", builtin_vartype);
     vm_register_builtin("input", builtin_input);

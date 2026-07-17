@@ -46,7 +46,7 @@ static void emit(Chunk *ch, OpCode op, int operand) {
     }
     ch->code[ch->code_count].op = op;
     ch->code[ch->code_count].operand = operand;
-    ch->code[ch->code_count].operand2 = 0;       // por defecto
+    ch->code[ch->code_count].operand2 = 0;
     ch->code_count++;
 }
 
@@ -78,7 +78,9 @@ static void compile_expr(Compiler *c, ASTNode *expr) {
         if (slot >= 0) {
             emit(c->chunk, OP_LOAD_VAR, slot);
         } else {
-            error(expr->line, "Variable no encontrada en ámbito local (globales no implementadas)");
+            int const_idx = add_constant(c, val_ptr(expr));
+            emit(c->chunk, OP_INTERPRET_NODE, const_idx);
+            c->chunk->code[c->chunk->code_count - 1].operand2 = 1;
         }
         break;
     }
@@ -110,21 +112,28 @@ static void compile_expr(Compiler *c, ASTNode *expr) {
                 case TOK_GT_OP: emit(c->chunk, OP_GT, 0); break;
                 case TOK_LE:    emit(c->chunk, OP_LE, 0); break;
                 case TOK_GE:    emit(c->chunk, OP_GE, 0); break;
-                default: error(expr->line, "Operador binario no soportado");
+                default: {
+                    int const_idx = add_constant(c, val_ptr(expr));
+                    emit(c->chunk, OP_INTERPRET_NODE, const_idx);
+                    c->chunk->code[c->chunk->code_count - 1].operand2 = 1;
+                }
             }
         }
         break;
     }
     case NODE_CALL: {
-        // Compilar argumentos
         for (int i = 0; i < expr->data.call.argc; i++)
             compile_expr(c, expr->data.call.args[i]);
         int builtin_idx = vm_find_builtin_index(expr->data.call.name);
-        if (builtin_idx < 0) error(expr->line, "Función no encontrada: %s", expr->data.call.name);
-        // Emitir CALL_BUILTIN y guardar la posición para ajustar operand2
-        int call_pos = c->chunk->code_count;  // siguiente instrucción
-        emit(c->chunk, OP_CALL_BUILTIN, builtin_idx);
-        c->chunk->code[call_pos].operand2 = expr->data.call.argc;  // fijar nº de argumentos
+        if (builtin_idx >= 0) {
+            int call_pos = c->chunk->code_count;
+            emit(c->chunk, OP_CALL_BUILTIN, builtin_idx);
+            c->chunk->code[call_pos].operand2 = expr->data.call.argc;
+        } else {
+            int const_idx = add_constant(c, val_ptr(expr));
+            emit(c->chunk, OP_INTERPRET_NODE, const_idx);
+            c->chunk->code[c->chunk->code_count - 1].operand2 = 1;
+        }
         break;
     }
     case NODE_LIST:
@@ -140,8 +149,12 @@ static void compile_expr(Compiler *c, ASTNode *expr) {
         emit(c->chunk, OP_INDEX, 0);
         break;
     }
-    default:
-        error(expr->line, "Expresión no soportada en compilador");
+    default: {
+        int const_idx = add_constant(c, val_ptr(expr));
+        emit(c->chunk, OP_INTERPRET_NODE, const_idx);
+        c->chunk->code[c->chunk->code_count - 1].operand2 = 1;
+        break;
+    }
     }
 }
 
@@ -154,15 +167,15 @@ static void compile_stmt(Compiler *c, ASTNode *stmt) {
     case NODE_ASSIGN: {
         const char *name = stmt->data.assign.name;
         int slot = resolve_local(c, name);
-        if (slot < 0) {
-            slot = add_local(c, name);
-        }
+        if (slot < 0) slot = add_local(c, name);
         if (stmt->data.assign.is_cmd) {
-            error(stmt->line, "Asignación desde comando no implementada en VM");
+            int const_idx = add_constant(c, val_string(stmt->data.assign.cmd_str));
+            emit(c->chunk, OP_CMD_ASSIGN, const_idx);
+            c->chunk->code[c->chunk->code_count - 1].operand2 = slot;
         } else {
             compile_expr(c, stmt->data.assign.value);
+            emit(c->chunk, OP_STORE_VAR, slot);
         }
-        emit(c->chunk, OP_STORE_VAR, slot);
         break;
     }
     case NODE_IF: {
@@ -195,14 +208,16 @@ static void compile_stmt(Compiler *c, ASTNode *stmt) {
         emit(c->chunk, OP_SHELL_CMD, add_constant(c, val_string(stmt->data.shell_cmd.cmd)));
         break;
     case NODE_RETURN:
-        if (stmt->data.ret.expr)
-            compile_expr(c, stmt->data.ret.expr);
-        else
-            emit(c->chunk, OP_PUSH_NULL, 0);
+        if (stmt->data.ret.expr) compile_expr(c, stmt->data.ret.expr);
+        else emit(c->chunk, OP_PUSH_NULL, 0);
         emit(c->chunk, OP_RETURN, 0);
         break;
-    default:
-        error(stmt->line, "Sentencia no implementada en compilador");
+    default: {
+        int const_idx = add_constant(c, val_ptr(stmt));
+        emit(c->chunk, OP_INTERPRET_NODE, const_idx);
+        c->chunk->code[c->chunk->code_count - 1].operand2 = 0;
+        break;
+    }
     }
 }
 
@@ -219,5 +234,15 @@ Chunk *compile_program(NodeList *program) {
 
     compile_block(&c, program);
     emit(c.chunk, OP_RETURN, 0);
+
+    /* Transferir las variables locales al chunk para la VM */
+    c.chunk->local_count = c.local_count;
+    if (c.local_count > 0) {
+        c.chunk->local_names = malloc(c.local_count * sizeof(char*));
+        for (int i = 0; i < c.local_count; i++) {
+            c.chunk->local_names[i] = c.local_names[i];  // los nombres ya son strdup
+        }
+    }
+
     return c.chunk;
 }
