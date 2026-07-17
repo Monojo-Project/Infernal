@@ -5,7 +5,7 @@
 - *Python*: súper fácil importar librerías.
 
 Si necesitas documentación, entra a:
-https://github.com/Monojo-Project/Infernal-Documentation
+https://github.com/LyndsCorp/Infernal-Documentation
 
 Para compilar el intérprete, solo tienes que poner en la terminal:
 ``` Shell
