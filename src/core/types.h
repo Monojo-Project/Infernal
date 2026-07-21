@@ -9,8 +9,10 @@
 #include <stdbool.h>
 #include <setjmp.h>
 
+/* ─── Forward declarations ────────────────────────────────── */
+typedef struct Chunk Chunk;   // <-- AÑADIDO: declaración adelantada de Chunk
 
-// Token types
+/* ─── Token types ────────────────────────────────────────── */
 typedef enum {
     TOK_EOF, TOK_NEWLINE, TOK_IDENT, TOK_NUMBER, TOK_STRING_LITERAL,
     TOK_EQ, TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_PERCENT,
@@ -33,18 +35,14 @@ typedef enum {
     TOK_LINE
 } TokenType;
 
-/* -------------------------------------------------------------------- */
-/* Token                                                                */
-/* -------------------------------------------------------------------- */
+/* ─── Token ──────────────────────────────────────────────── */
 typedef struct {
     TokenType type;
     char *lexeme;
     int line;
 } Token;
 
-/* -------------------------------------------------------------------- */
-/* AST nodes                                                            */
-/* -------------------------------------------------------------------- */
+/* ─── AST nodes ──────────────────────────────────────────── */
 typedef struct ASTNode ASTNode;
 typedef struct {
     ASTNode **stmts;
@@ -61,7 +59,7 @@ typedef struct {
     bool catch_all;
 } FlagSpec;
 
-/* Value types */
+/* ─── Value types ────────────────────────────────────────── */
 #define VAL_NULL      0
 #define VAL_INT       1
 #define VAL_FLOAT     2
@@ -92,16 +90,18 @@ struct Value {
 };
 
 typedef Value (*BuiltinFunc)(int argc, Value *args);
+
+/* ─── Función objeto (con código compilado) ───────────────── */
 typedef struct FuncObject {
     enum { FUNC_USER, FUNC_BUILTIN } kind;
     union {
-        ASTNode *def;
-        BuiltinFunc builtin;
+        ASTNode *def;           // definición AST (para funciones de usuario)
+        BuiltinFunc builtin;    // puntero a función C (built-in)
     };
+    Chunk *code;                // <-- CORREGIDO: ahora usa 'Chunk *' (gracias a la forward declaration)
 } FuncObject;
 
-
-// AST node structure
+/* ─── AST node structure ──────────────────────────────────── */
 struct ASTNode {
     int line;
     enum {
@@ -117,27 +117,27 @@ struct ASTNode {
         struct { char *cmd; } cmd_stmt;
         struct { char *cmd; } shell_cmd;
         struct { char *name; ASTNode *value; bool is_cmd; char *cmd_str; int vtype;
-                 bool is_local; bool is_global; ASTNode *lhs_index; } assign;
-        struct { ASTNode *cond; NodeList then_block, else_block; } if_stmt;
-        struct { ASTNode *cond; NodeList body; } while_stmt;
-        struct { char *var; int vtype; ASTNode *init, *cond, *incr; NodeList body; } for_stmt;
-        struct { char *name; char **params; int *ptypes; int param_count; NodeList body; } func;
-        struct { ASTNode *expr; } ret;
-        struct { char *path; NodeList module_block; } import;
-        struct { NodeList try_block, catch_block; } try_stmt;
-        struct { char *name; } var;
-        struct { int type; int ival; double fval; int bval; char *sval; } lit;
-        struct { int op; ASTNode *left, *right; } binop;
-        struct { char *name; ASTNode **args; int argc; } call;
-        struct { ASTNode *list, *index; } idx;
-        struct { int mode; FlagSpec *specs; int spec_count; } flags;
-        struct { ASTNode **items; int count; } list_lit;
-        struct { char *var; ASTNode *list_expr; NodeList body; } for_in;
-        struct {
-            ASTNode *line_expr;
-            char *portal_name;
-        } repeat;
-        struct { char *name; bool is_local; } portal;
+            bool is_local; bool is_global; ASTNode *lhs_index; } assign;
+            struct { ASTNode *cond; NodeList then_block, else_block; } if_stmt;
+            struct { ASTNode *cond; NodeList body; } while_stmt;
+            struct { char *var; int vtype; ASTNode *init, *cond, *incr; NodeList body; } for_stmt;
+            struct { char *name; char **params; int *ptypes; int param_count; NodeList body; } func;
+            struct { ASTNode *expr; } ret;
+            struct { char *path; NodeList module_block; } import;
+            struct { NodeList try_block, catch_block; } try_stmt;
+            struct { char *name; } var;
+            struct { int type; int ival; double fval; int bval; char *sval; } lit;
+            struct { int op; ASTNode *left, *right; } binop;
+            struct { char *name; ASTNode **args; int argc; } call;
+            struct { ASTNode *list, *index; } idx;
+            struct { int mode; FlagSpec *specs; int spec_count; } flags;
+            struct { ASTNode **items; int count; } list_lit;
+            struct { char *var; ASTNode *list_expr; NodeList body; } for_in;
+            struct {
+                ASTNode *line_expr;
+                char *portal_name;
+            } repeat;
+            struct { char *name; bool is_local; } portal;
     } data;
 };
 

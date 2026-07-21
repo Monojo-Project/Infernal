@@ -6,9 +6,13 @@
 #define RUNTIME_COMMAND_H
 
 #include <stdio.h>
+#include "core/value.h"   // para que Value sea conocido
 
 char *expand_command(const char *cmd);
 char *get_var_string(const char *name);
+
+// Nueva función de expansión con arrays de locales
+char *expand_command_with_locals(const char *cmd, char **names, Value *values, int count);
 
 int execute_embedded(const char *full_cmd);
 FILE *popen_embedded_with_path(const char *full_cmd, const char *mode, char **temp_path);

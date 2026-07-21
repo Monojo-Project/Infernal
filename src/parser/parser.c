@@ -1,7 +1,8 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: parser/parser.c
- */
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 #include "runtime/globals.h"
 #include "runtime/error.h"
 #include "stdlib/embedded.h"
+#include "vm/compiler.h"
 
 static void validate_var_name(const char *name, int line) {
     const char invalid[] = "@[](){}";
@@ -321,6 +323,18 @@ NodeList parse_block(const char *terminator) {
                 snprintf(prefixed, sizeof(prefixed), "%s.%s", current_import_prefix, fname);
                 func_register(strdup(prefixed), stmt);
             }
+
+            // La compilacion
+            if (stmt) {
+                Chunk *func_chunk = compile_function(stmt);
+                if (func_chunk) {
+                    FuncObject *fobj = func_lookup(stmt->data.func.name);
+                    if (fobj && fobj->kind == FUNC_USER) {
+                        fobj->code = func_chunk;
+                    }
+                }
+            }
+
         } else if (t.type == TOK_RETURN) {
             ts_advance();
             ASTNode *expr = NULL;

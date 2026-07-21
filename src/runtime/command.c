@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/command.c
- */
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,7 +89,80 @@ char *expand_command(const char *cmd) {
     return realloc(result, len + 1);
 }
 
-/* ─── Descompresión usando libz cargada dinámicamente (SEGURA) ─── */
+// EXPANSION RAPIDA USANDO ARRAYS DE LOCALES
+char *expand_command_with_locals(const char *cmd, char **names, Value *values, int count) {
+    if (!cmd) return NULL;
+    size_t cap = strlen(cmd) * 2 + 64;
+    char *result = malloc(cap);
+    size_t len = 0;
+    const char *p = cmd;
+
+    while (*p) {
+        if (*p == '$' && (isalpha(*(p+1)) || *(p+1) == '_')) {
+            const char *start = p + 1;
+            while (isalnum(*start) || *start == '_') start++;
+            size_t nlen = start - (p + 1);
+            if (nlen > 127) nlen = 127;
+            char name[128];
+            memcpy(name, p + 1, nlen);
+            name[nlen] = '\0';
+            char *val = NULL;
+            // 1) Buscar en las variables locales de la VM
+            for (int i = 0; i < count; i++) {
+                if (names[i] && strcmp(names[i], name) == 0) {
+                    Value v = values[i];
+                    char buf[256];
+                    switch (v.type) {
+                        case VAL_INT: snprintf(buf, sizeof(buf), "%d", v.data.ival); val = strdup(buf); break;
+                        case VAL_FLOAT: snprintf(buf, sizeof(buf), "%g", v.data.fval); val = strdup(buf); break;
+                        case VAL_BOOL: val = strdup(v.data.bval ? "true" : "false"); break;
+                        case VAL_STRING: val = strdup(v.data.sval); break;
+                        default: val = NULL;
+                    }
+                    break;
+                }
+            }
+            // 2) Si no se encontró, buscar en los scopes globales
+            if (!val) {
+                VarEntry *e = scope_find(current_scope, name);
+                if (e) {
+                    Value v = e->value;
+                    char buf[256];
+                    switch (v.type) {
+                        case VAL_INT: snprintf(buf, sizeof(buf), "%d", v.data.ival); val = strdup(buf); break;
+                        case VAL_FLOAT: snprintf(buf, sizeof(buf), "%g", v.data.fval); val = strdup(buf); break;
+                        case VAL_BOOL: val = strdup(v.data.bval ? "true" : "false"); break;
+                        case VAL_STRING: val = strdup(v.data.sval); break;
+                        default: val = NULL;
+                    }
+                }
+            }
+            if (val) {
+                size_t vlen = strlen(val);
+                if (len + vlen >= cap) {
+                    cap = (len + vlen) * 2;
+                    result = realloc(result, cap);
+                }
+                memcpy(result + len, val, vlen);
+                len += vlen;
+                free(val);
+                p = start;
+                continue;
+            }
+            p = start;
+            continue;
+        }
+        if (len + 1 >= cap) {
+            cap *= 2;
+            result = realloc(result, cap);
+        }
+        result[len++] = *p++;
+    }
+    result[len] = '\0';
+    return realloc(result, len + 1);
+}
+
+// Descompresión usando libz cargada dinámicamente
 static unsigned char *gunzip_data(const unsigned char *compressed, size_t compressed_len, size_t *out_len) {
     static void *zlib_handle = NULL;
     static int zlib_available = -1;  // -1 = no verificado, 0 = no, 1 = sí

@@ -1,3 +1,8 @@
+/*
+ * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
+ * Código fuente de Infernal: vm/bytecode.h
+*/
+
 #ifndef VM_BYTECODE_H
 #define VM_BYTECODE_H
 
@@ -16,7 +21,7 @@ typedef enum {
     OP_EQ, OP_NEQ, OP_LT, OP_GT, OP_LE, OP_GE,
     OP_AND, OP_OR, OP_NOT,
     OP_CALL_BUILTIN,
-    OP_CALL_USER,
+    OP_CALL_USER,          // <-- NUEVO
     OP_RETURN,
     OP_JUMP_IF_FALSE, OP_JUMP,
     OP_DUP, OP_POP,
@@ -27,16 +32,17 @@ typedef enum {
     OP_SHELL_CMD,
     OP_FLAGS,
     OP_CMD_ASSIGN,
-    OP_INTERPRET_NODE
+    OP_INTERPRET_NODE,
+    OP_REPEAT_LINE          // <-- NUEVO (opcional)
 } OpCode;
 
 typedef struct {
     OpCode op;
-    int operand;        // índice de constante, local, global o desplazamiento de salto
-    int operand2;       // operando extra (p. ej. número de argumentos en llamadas)
+    int operand;
+    int operand2;
 } Instruction;
 
-typedef struct {
+typedef struct Chunk {
     Value *constants;
     int const_count, const_cap;
 

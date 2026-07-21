@@ -1,7 +1,8 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/globals.c
- */
+*/
+
 #include <stdlib.h>
 #include <string.h>
 #include "globals.h"
@@ -12,7 +13,7 @@ Scope *current_scope = NULL;
 
 FuncEntry *func_table = NULL;
 char *current_import_prefix = NULL;
-int max_loop_iterations = 10000; // MODIFICA ESTO si quieres cambiar el límite de iteraciones en bucles
+int max_loop_iterations = 10000;
 
 jmp_buf exception_env;
 int exception_raised = 0;
@@ -29,12 +30,13 @@ int repeat_line_target = 0;
 
 char *script_dir = NULL;
 
-char *current_source_file = NULL;   // <-- nuevo
+char *current_source_file = NULL;
 
 void func_register(const char *name, ASTNode *def) {
     FuncObject *obj = malloc(sizeof(FuncObject));
     obj->kind = FUNC_USER;
     obj->def = def;
+    obj->code = NULL;   // <-- INICIALIZADO
     FuncEntry *e = malloc(sizeof(FuncEntry));
     e->name = strdup(name);
     e->obj = obj;
@@ -46,6 +48,7 @@ void func_register_builtin(const char *name, BuiltinFunc fn) {
     FuncObject *obj = malloc(sizeof(FuncObject));
     obj->kind = FUNC_BUILTIN;
     obj->builtin = fn;
+    obj->code = NULL;
     FuncEntry *e = malloc(sizeof(FuncEntry));
     e->name = strdup(name);
     e->obj = obj;

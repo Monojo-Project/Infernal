@@ -2,6 +2,7 @@
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/scope.c
 */
+
 #include <stdlib.h>
 #include <string.h>
 #include "scope.h"
@@ -19,8 +20,9 @@ Scope *scope_new(Scope *parent) {
 
 VarEntry *scope_find(Scope *scope, const char *name) {
     while (scope) {
-        for (VarEntry *e = scope->vars; e; e = e->next)
+        for (VarEntry *e = scope->vars; e; e = e->next) {
             if (strcmp(e->name, name) == 0) return e;
+        }
         scope = scope->parent;
     }
     return NULL;
@@ -29,8 +31,9 @@ VarEntry *scope_find(Scope *scope, const char *name) {
 VarEntry *scope_find_script(Scope *scope, const char *name) {
     extern Scope *super_global_scope;
     while (scope && scope != super_global_scope) {
-        for (VarEntry *e = scope->vars; e; e = e->next)
+        for (VarEntry *e = scope->vars; e; e = e->next) {
             if (strcmp(e->name, name) == 0) return e;
+        }
         scope = scope->parent;
     }
     return NULL;
@@ -68,16 +71,18 @@ void scope_assign(Scope *scope, const char *name, Value val, int line) {
 
 PortalEntry *portal_find(Scope *scope, const char *name) {
     while (scope) {
-        for (PortalEntry *p = scope->portals; p; p = p->next)
+        for (PortalEntry *p = scope->portals; p; p = p->next) {
             if (strcmp(p->name, name) == 0) return p;
+        }
         scope = scope->parent;
     }
     return NULL;
 }
 
 PortalEntry *portal_find_in_scope(Scope *scope, const char *name) {
-    for (PortalEntry *p = scope->portals; p; p = p->next)
+    for (PortalEntry *p = scope->portals; p; p = p->next) {
         if (strcmp(p->name, name) == 0) return p;
+    }
     return NULL;
 }
 
@@ -87,4 +92,23 @@ void portal_define(Scope *scope, const char *name, int line) {
     p->line = line;
     p->next = scope->portals;
     scope->portals = p;
+}
+
+void scope_free(Scope *s) {
+    if (!s) return;
+    VarEntry *v = s->vars;
+    while (v) {
+        VarEntry *next = v->next;
+        free(v->name);
+        free(v);
+        v = next;
+    }
+    PortalEntry *p = s->portals;
+    while (p) {
+        PortalEntry *next = p->next;
+        free(p->name);
+        free(p);
+        p = next;
+    }
+    free(s);
 }

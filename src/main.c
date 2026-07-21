@@ -1,7 +1,7 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
- * Código fuente de Infernal: main.c (versión con VM de bytecode)
- */
+ * Código fuente de Infernal: main.c
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +20,17 @@
 #include "vm/compiler.h"
 
 extern const char* get_metadata(const char *type);
+
+// ─── Función auxiliar para liberar un chunk ──────────────────
+void chunk_free(Chunk *ch) {
+    if (!ch) return;
+    free(ch->constants);
+    for (int i = 0; i < ch->local_count; i++) free(ch->local_names[i]);
+    free(ch->local_names);
+    free(ch->code);
+    free(ch);
+}
+// ─────────────────────────────────────────────────────────────────
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -110,7 +121,6 @@ int main(int argc, char **argv) {
     global_scope = scope_new(super_global_scope);
     current_scope = global_scope;
 
-    // Registrar builtins en la VM (no en la antigua tabla de funciones)
     register_all_builtins();
 
     FILE *fp = fopen(argv[1], "r");
@@ -133,6 +143,9 @@ int main(int argc, char **argv) {
         // Ejecutar en la VM
         Value result = vm_run(main_chunk);
         (void)result; // descartar
+
+        // LIBERAR MEMORIA
+        chunk_free(main_chunk);
 
         cleanup_embedded_temp_dir();
         free(script_dir);

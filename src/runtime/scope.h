@@ -2,6 +2,7 @@
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: runtime/scope.h
 */
+
 #ifndef RUNTIME_SCOPE_H
 #define RUNTIME_SCOPE_H
 
@@ -35,5 +36,7 @@ void scope_assign(Scope *scope, const char *name, Value val, int line);
 PortalEntry *portal_find(Scope *scope, const char *name);
 PortalEntry *portal_find_in_scope(Scope *scope, const char *name);
 void portal_define(Scope *scope, const char *name, int line);
+
+void scope_free(Scope *s);   // libera recursivamente todas las variables y portales
 
 #endif
