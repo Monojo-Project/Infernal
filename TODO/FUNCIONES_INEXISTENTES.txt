@@ -1,0 +1,1 @@
+Cuando escribí "wanr" en vez de "warn" por accidente, dió error de segmention fault. Debería dar error de función "wanr" no encontrada.
