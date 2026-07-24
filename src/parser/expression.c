@@ -1,7 +1,8 @@
 /*
  * Infernal: el lenguaje de programación. Copyright (C) 2026, GPL v3+ License, Lynds Corp., Aros Legendarios, David Baña Szymaniak.
  * Código fuente de Infernal: parser/expression.c
- */
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,14 +49,10 @@ ASTNode *parse_primary() {
         return n;
     }
     if (t.type == TOK_IDENT) {
-        // Comprobar si es una función conocida
-        FuncObject *fobj = func_lookup(t.lexeme);
-        if (fobj) {
-            // Es una función: debe ir seguida de '('
-            if (ts.pos + 1 >= ts.count || ts.tokens[ts.pos + 1].type != TOK_LPAREN) {
-                error(t.line, "La función '%s' requiere paréntesis para ser invocada.", t.lexeme);
-            }
-            ts_advance(); // consumir el identificador
+        // Ver si el siguiente token es '(' para tratarlo como llamada a función
+        bool is_call = (ts.pos + 1 < ts.count && ts.tokens[ts.pos + 1].type == TOK_LPAREN);
+        if (is_call) {
+            ts_advance(); // consumir identificador
             ASTNode *n = node_create(NODE_CALL, t.line);
             n->data.call.name = strdup(t.lexeme);
             n->data.call.argc = 0;
@@ -71,21 +68,21 @@ ASTNode *parse_primary() {
                     error(t.line, "Se esperaba ')' en la llamada a función '%s'", t.lexeme);
             }
             return n;
+        } else {
+            // No es función → variable
+            ts_advance();
+            ASTNode *n = node_create(NODE_VAR, t.line);
+            n->data.var.name = strdup(t.lexeme);
+            while (ts_match(TOK_LBRACKET)) {
+                ASTNode *idx = parse_expression(0);
+                if (!ts_match(TOK_RBRACKET)) error(t.line, "Se esperaba ']'");
+                ASTNode *ni = node_create(NODE_INDEX, t.line);
+                ni->data.idx.list = n;
+                ni->data.idx.index = idx;
+                n = ni;
+            }
+            return n;
         }
-
-        // No es función → variable
-        ts_advance();
-        ASTNode *n = node_create(NODE_VAR, t.line);
-        n->data.var.name = strdup(t.lexeme);
-        while (ts_match(TOK_LBRACKET)) {
-            ASTNode *idx = parse_expression(0);
-            if (!ts_match(TOK_RBRACKET)) error(t.line, "Se esperaba ']'");
-            ASTNode *ni = node_create(NODE_INDEX, t.line);
-            ni->data.idx.list = n;
-            ni->data.idx.index = idx;
-            n = ni;
-        }
-        return n;
     }
     if (t.type == TOK_LBRACKET) {
         ts_advance();
@@ -210,14 +207,14 @@ static ASTNode *parse_comparison() {
     if (op == TOK_EEQ || op == TOK_NEQ || op == TOK_LT_OP || op == TOK_GT_OP ||
         op == TOK_LE || op == TOK_GE) {
         Token t = ts_advance();
-        ASTNode *right = parse_expr();
-        ASTNode *n = node_create(NODE_BINOP, t.line);
-        n->data.binop.op = t.type;
-        n->data.binop.left = left;
-        n->data.binop.right = right;
-        return n;
-    }
-    return left;
+    ASTNode *right = parse_expr();
+    ASTNode *n = node_create(NODE_BINOP, t.line);
+    n->data.binop.op = t.type;
+    n->data.binop.left = left;
+    n->data.binop.right = right;
+    return n;
+        }
+        return left;
 }
 
 static ASTNode *parse_logic_and() {

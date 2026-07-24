@@ -94,10 +94,20 @@ NodeList parse_block(const char *terminator) {
         if (t.type == TOK_BANG) {
             ts_advance();
             char cmd[4096] = {0};
+            bool last_was_no_space = false;
             while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                 Token ct = ts_advance();
-                if (cmd[0] != '\0') strcat(cmd, " ");
-                strcat(cmd, ct.lexeme);
+                bool prepend_space = true;
+                if (last_was_no_space) prepend_space = false;
+                if (prepend_space && cmd[0] != '\0') strcat(cmd, " ");
+                if (ct.type == TOK_STRING_LITERAL) {
+                    strcat(cmd, "\"");
+                    strcat(cmd, ct.lexeme);
+                    strcat(cmd, "\"");
+                } else {
+                    strcat(cmd, ct.lexeme);
+                }
+                last_was_no_space = (ct.type == TOK_MINUS || ct.type == TOK_PLUS);
             }
             if (ts_peek().type == TOK_BANG) ts_advance();
             stmt = node_create(NODE_CMD_STMT, t.line);
@@ -109,10 +119,20 @@ NodeList parse_block(const char *terminator) {
                 if (next.type == TOK_BANG) {
                     ts_advance();
                     char cmd2[4096] = {0};
+                    bool last_was_no_space2 = false;
                     while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                         Token ct2 = ts_advance();
-                        if (cmd2[0] != '\0') strcat(cmd2, " ");
-                        strcat(cmd2, ct2.lexeme);
+                        bool prepend_space = true;
+                        if (last_was_no_space2) prepend_space = false;
+                        if (prepend_space && cmd2[0] != '\0') strcat(cmd2, " ");
+                        if (ct2.type == TOK_STRING_LITERAL) {
+                            strcat(cmd2, "\"");
+                            strcat(cmd2, ct2.lexeme);
+                            strcat(cmd2, "\"");
+                        } else {
+                            strcat(cmd2, ct2.lexeme);
+                        }
+                        last_was_no_space2 = (ct2.type == TOK_MINUS || ct2.type == TOK_PLUS);
                     }
                     if (ts_peek().type == TOK_BANG) ts_advance();
                     next_stmt = node_create(NODE_CMD_STMT, next.line);
@@ -121,19 +141,25 @@ NodeList parse_block(const char *terminator) {
                     char cmd2[4096] = {0};
                     Token first2 = ts_advance();
                     strcpy(cmd2, first2.lexeme);
-                    bool last_was_dash = (first2.type == TOK_MINUS);
-                    bool last_was_lbrace = (first2.type == TOK_LBRACE);
+                    bool last_was_no_space2 = false;
+                    bool last_was_lbrace2 = (first2.type == TOK_LBRACE);
                     while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF && ts_peek().type != TOK_OR) {
                         Token ct2 = ts_advance();
                         bool prepend_space = true;
-                        if (last_was_lbrace || ct2.type == TOK_RBRACE) prepend_space = false;
-                        else if (last_was_dash) prepend_space = false;
+                        if (last_was_lbrace2 || ct2.type == TOK_RBRACE)
+                            prepend_space = false;
+                        else if (last_was_no_space2)
+                            prepend_space = false;
                         if (prepend_space) strcat(cmd2, " ");
                         if (ct2.type == TOK_STRING_LITERAL) {
-                            strcat(cmd2, "\""); strcat(cmd2, ct2.lexeme); strcat(cmd2, "\"");
-                        } else strcat(cmd2, ct2.lexeme);
-                        last_was_lbrace = (ct2.type == TOK_LBRACE);
-                        last_was_dash = (ct2.type == TOK_MINUS);
+                            strcat(cmd2, "\"");
+                            strcat(cmd2, ct2.lexeme);
+                            strcat(cmd2, "\"");
+                        } else {
+                            strcat(cmd2, ct2.lexeme);
+                        }
+                        last_was_lbrace2 = (ct2.type == TOK_LBRACE);
+                        last_was_no_space2 = (ct2.type == TOK_MINUS || ct2.type == TOK_PLUS);
                     }
                     next_stmt = node_create(NODE_SHELL_CMD, next.line);
                     next_stmt->data.shell_cmd.cmd = strdup(cmd2);
@@ -157,9 +183,12 @@ NodeList parse_block(const char *terminator) {
             strcat(cmd, "\"");
             strcat(cmd, first.lexeme);
             strcat(cmd, "\"");
+            bool last_was_no_space = false;
             while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                 Token ct = ts_advance();
-                strcat(cmd, " ");
+                bool prepend_space = true;
+                if (last_was_no_space) prepend_space = false;
+                if (prepend_space) strcat(cmd, " ");
                 if (ct.type == TOK_STRING_LITERAL) {
                     strcat(cmd, "\"");
                     strcat(cmd, ct.lexeme);
@@ -167,6 +196,7 @@ NodeList parse_block(const char *terminator) {
                 } else {
                     strcat(cmd, ct.lexeme);
                 }
+                last_was_no_space = (ct.type == TOK_MINUS || ct.type == TOK_PLUS);
             }
             stmt = node_create(NODE_SHELL_CMD, t.line);
             stmt->data.shell_cmd.cmd = strdup(cmd);
@@ -177,10 +207,20 @@ NodeList parse_block(const char *terminator) {
                 if (next.type == TOK_BANG) {
                     ts_advance();
                     char cmd2[4096] = {0};
+                    bool last_was_no_space2 = false;
                     while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                         Token ct2 = ts_advance();
-                        if (cmd2[0] != '\0') strcat(cmd2, " ");
-                        strcat(cmd2, ct2.lexeme);
+                        bool prepend_space = true;
+                        if (last_was_no_space2) prepend_space = false;
+                        if (prepend_space && cmd2[0] != '\0') strcat(cmd2, " ");
+                        if (ct2.type == TOK_STRING_LITERAL) {
+                            strcat(cmd2, "\"");
+                            strcat(cmd2, ct2.lexeme);
+                            strcat(cmd2, "\"");
+                        } else {
+                            strcat(cmd2, ct2.lexeme);
+                        }
+                        last_was_no_space2 = (ct2.type == TOK_MINUS || ct2.type == TOK_PLUS);
                     }
                     if (ts_peek().type == TOK_BANG) ts_advance();
                     next_stmt = node_create(NODE_CMD_STMT, next.line);
@@ -189,19 +229,25 @@ NodeList parse_block(const char *terminator) {
                     char cmd2[4096] = {0};
                     Token first2 = ts_advance();
                     strcpy(cmd2, first2.lexeme);
-                    bool last_was_dash = (first2.type == TOK_MINUS);
-                    bool last_was_lbrace = (first2.type == TOK_LBRACE);
+                    bool last_was_no_space2 = false;
+                    bool last_was_lbrace2 = (first2.type == TOK_LBRACE);
                     while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF && ts_peek().type != TOK_OR) {
                         Token ct2 = ts_advance();
                         bool prepend_space = true;
-                        if (last_was_lbrace || ct2.type == TOK_RBRACE) prepend_space = false;
-                        else if (last_was_dash) prepend_space = false;
+                        if (last_was_lbrace2 || ct2.type == TOK_RBRACE)
+                            prepend_space = false;
+                        else if (last_was_no_space2)
+                            prepend_space = false;
                         if (prepend_space) strcat(cmd2, " ");
                         if (ct2.type == TOK_STRING_LITERAL) {
-                            strcat(cmd2, "\""); strcat(cmd2, ct2.lexeme); strcat(cmd2, "\"");
-                        } else strcat(cmd2, ct2.lexeme);
-                        last_was_lbrace = (ct2.type == TOK_LBRACE);
-                        last_was_dash = (ct2.type == TOK_MINUS);
+                            strcat(cmd2, "\"");
+                            strcat(cmd2, ct2.lexeme);
+                            strcat(cmd2, "\"");
+                        } else {
+                            strcat(cmd2, ct2.lexeme);
+                        }
+                        last_was_lbrace2 = (ct2.type == TOK_LBRACE);
+                        last_was_no_space2 = (ct2.type == TOK_MINUS || ct2.type == TOK_PLUS);
                     }
                     next_stmt = node_create(NODE_SHELL_CMD, next.line);
                     next_stmt->data.shell_cmd.cmd = strdup(cmd2);
@@ -755,23 +801,25 @@ NodeList parse_block(const char *terminator) {
                     char cmd[4096] = {0};
                     Token first = ts_advance();
                     strcpy(cmd, first.lexeme);
-                    bool last_was_dash = (first.type == TOK_MINUS);
+                    bool last_was_no_space = false;
                     bool last_was_lbrace = (first.type == TOK_LBRACE);
                     while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                         Token ct = ts_advance();
                         bool prepend_space = true;
                         if (last_was_lbrace || ct.type == TOK_RBRACE)
                             prepend_space = false;
-                        else if (last_was_dash)
+                        else if (last_was_no_space)
                             prepend_space = false;
                         if (prepend_space) strcat(cmd, " ");
                         if (ct.type == TOK_STRING_LITERAL) {
-                            strcat(cmd, "\""); strcat(cmd, ct.lexeme); strcat(cmd, "\"");
+                            strcat(cmd, "\"");
+                            strcat(cmd, ct.lexeme);
+                            strcat(cmd, "\"");
                         } else {
                             strcat(cmd, ct.lexeme);
                         }
                         last_was_lbrace = (ct.type == TOK_LBRACE);
-                        last_was_dash = (ct.type == TOK_MINUS);
+                        last_was_no_space = (ct.type == TOK_MINUS || ct.type == TOK_PLUS);
                     }
                     stmt = node_create(NODE_SHELL_CMD, t.line);
                     stmt->data.shell_cmd.cmd = strdup(cmd);
@@ -782,10 +830,20 @@ NodeList parse_block(const char *terminator) {
                         if (next.type == TOK_BANG) {
                             ts_advance();
                             char cmd2[4096] = {0};
+                            bool last_was_no_space2 = false;
                             while (ts_peek().type != TOK_BANG && ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF) {
                                 Token ct2 = ts_advance();
-                                if (cmd2[0] != '\0') strcat(cmd2, " ");
-                                strcat(cmd2, ct2.lexeme);
+                                bool prepend_space = true;
+                                if (last_was_no_space2) prepend_space = false;
+                                if (prepend_space && cmd2[0] != '\0') strcat(cmd2, " ");
+                                if (ct2.type == TOK_STRING_LITERAL) {
+                                    strcat(cmd2, "\"");
+                                    strcat(cmd2, ct2.lexeme);
+                                    strcat(cmd2, "\"");
+                                } else {
+                                    strcat(cmd2, ct2.lexeme);
+                                }
+                                last_was_no_space2 = (ct2.type == TOK_MINUS || ct2.type == TOK_PLUS);
                             }
                             if (ts_peek().type == TOK_BANG) ts_advance();
                             next_stmt = node_create(NODE_CMD_STMT, next.line);
@@ -794,19 +852,25 @@ NodeList parse_block(const char *terminator) {
                             char cmd2[4096] = {0};
                             Token first2 = ts_advance();
                             strcpy(cmd2, first2.lexeme);
-                            bool last_was_dash = (first2.type == TOK_MINUS);
-                            bool last_was_lbrace = (first2.type == TOK_LBRACE);
+                            bool last_was_no_space2 = false;
+                            bool last_was_lbrace2 = (first2.type == TOK_LBRACE);
                             while (ts_peek().type != TOK_NEWLINE && ts_peek().type != TOK_EOF && ts_peek().type != TOK_OR) {
                                 Token ct2 = ts_advance();
                                 bool prepend_space = true;
-                                if (last_was_lbrace || ct2.type == TOK_RBRACE) prepend_space = false;
-                                else if (last_was_dash) prepend_space = false;
+                                if (last_was_lbrace2 || ct2.type == TOK_RBRACE)
+                                    prepend_space = false;
+                                else if (last_was_no_space2)
+                                    prepend_space = false;
                                 if (prepend_space) strcat(cmd2, " ");
                                 if (ct2.type == TOK_STRING_LITERAL) {
-                                    strcat(cmd2, "\""); strcat(cmd2, ct2.lexeme); strcat(cmd2, "\"");
-                                } else strcat(cmd2, ct2.lexeme);
-                                last_was_lbrace = (ct2.type == TOK_LBRACE);
-                                last_was_dash = (ct2.type == TOK_MINUS);
+                                    strcat(cmd2, "\"");
+                                    strcat(cmd2, ct2.lexeme);
+                                    strcat(cmd2, "\"");
+                                } else {
+                                    strcat(cmd2, ct2.lexeme);
+                                }
+                                last_was_lbrace2 = (ct2.type == TOK_LBRACE);
+                                last_was_no_space2 = (ct2.type == TOK_MINUS || ct2.type == TOK_PLUS);
                             }
                             next_stmt = node_create(NODE_SHELL_CMD, next.line);
                             next_stmt->data.shell_cmd.cmd = strdup(cmd2);
